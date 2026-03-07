@@ -34,6 +34,7 @@
     "teamMembers": "团队成员",
     "resetToDefaults": "重置为默认",
     "memberEditHint": "💡 点击成员可编辑名称和人格定义",
+    "memberAddDeleteHint": "🗑️ 点击删除按钮可移除成员，点击下方按钮可添加新成员",
     "createTeam": "创建团队",
     "creatingTeam": "创建中...",
     "creatingTeamStarted": "开始创建团队...",
@@ -63,7 +64,11 @@
     "resumeButton": "▶️ 恢复",
     "pauseButton": "⏸️ 暂停",
     "resumeTooltip": "恢复空间",
-    "pauseTooltip": "暂停空间"
+    "pauseTooltip": "暂停空间",
+    "loadingOlderMessages": "正在加载更早的消息...",
+    "attachButton": "添加附件",
+    "sending": "发送中...",
+    "downloadAttachment": "下载附件"
   },
   "aiMembers": {
     "edit": "编辑",
@@ -84,7 +89,8 @@
     "tokenRequired": "Token 是必需的",
     "invalidToken": "无效的 Token 格式",
     "connectionFailed": "连接失败",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "uploadFailed": "上传失败，请重试"
   },
   "common": {
     "loading": "加载中...",

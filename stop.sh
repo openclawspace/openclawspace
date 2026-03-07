@@ -46,7 +46,7 @@ kill_port 3000 "Hub Web"
 echo ""
 echo "步骤 2/2: 关闭服务进程..."
 kill_process "tsx src/index.ts" "Hub Service"
-kill_process "tsx src/cli.ts" "ocs-client"
+kill_process "src/cli.ts" "ocs-client"
 kill_process "vite" "Vite Dev Server"
 
 echo ""

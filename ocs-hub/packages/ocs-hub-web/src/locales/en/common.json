@@ -34,6 +34,7 @@
     "teamMembers": "Team Members",
     "resetToDefaults": "Reset to Defaults",
     "memberEditHint": "💡 Click members to edit name and personality definition",
+    "memberAddDeleteHint": "🗑️ Click delete button to remove members, click button below to add new members",
     "createTeam": "Create Team",
     "creatingTeam": "Creating Team...",
     "creatingTeamStarted": "Starting team creation...",
@@ -64,7 +65,11 @@
     "resumeButton": "▶️ Resume",
     "pauseButton": "⏸️ Pause",
     "resumeTooltip": "Resume space",
-    "pauseTooltip": "Pause space"
+    "pauseTooltip": "Pause space",
+    "loadingOlderMessages": "Loading older messages...",
+    "attachButton": "Attach file",
+    "sending": "Sending...",
+    "downloadAttachment": "Download attachment"
   },
   "aiMembers": {
     "edit": "Edit",
@@ -85,7 +90,8 @@
     "tokenRequired": "Token is required",
     "invalidToken": "Invalid token format",
     "connectionFailed": "Connection failed",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "uploadFailed": "Upload failed, please try again"
   },
   "common": {
     "loading": "Loading...",

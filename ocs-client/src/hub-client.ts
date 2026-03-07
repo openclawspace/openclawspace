@@ -131,6 +131,10 @@ export class HubClient {
         this.sendMessagesData(message.payload?.spaceId);
         break;
 
+      case 'get_older_messages':
+        this.sendOlderMessagesData(message.payload?.spaceId, message.payload?.beforeId);
+        break;
+
       case 'send_message':
         this.handleUserMessage(message.payload);
         break;
@@ -238,11 +242,11 @@ export class HubClient {
   }
 
   private async handleUserMessage(payload: any): Promise<void> {
-    const { spaceId, content } = payload || {};
+    const { spaceId, content, attachments } = payload || {};
     if (!spaceId || !content) return;
 
-    // Store user message
-    const message = this.spaceManager.addMessage(spaceId, 'user', content);
+    // Store user message with attachments if provided
+    const message = this.spaceManager.addMessage(spaceId, 'user', content, attachments);
 
     // Broadcast to browser
     this.send({
@@ -333,6 +337,15 @@ export class HubClient {
     const messages = this.spaceManager.getMessages(spaceId, 50);
     this.send({
       type: 'messages_data',
+      payload: { messages }
+    });
+  }
+
+  private async sendOlderMessagesData(spaceId?: string, beforeId?: string): Promise<void> {
+    if (!spaceId || !beforeId) return;
+    const messages = this.spaceManager.getMessagesBeforeId(spaceId, beforeId, 50);
+    this.send({
+      type: 'older_messages_data',
       payload: { messages }
     });
   }

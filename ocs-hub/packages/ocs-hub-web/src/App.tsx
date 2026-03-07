@@ -22,12 +22,27 @@ interface Member {
   soulMd: string
 }
 
+interface Attachment {
+  id: string
+  messageId: string
+  type: 'image' | 'document' | 'media' | 'file'
+  originalName: string
+  storedName: string
+  relativePath: string
+  fileSize: number
+  mimeType: string
+  thumbnailPath?: string
+  createdAt: string
+  data?: string // Base64 file data (only used when sending)
+}
+
 interface Message {
   id: string
   spaceId: string
   senderId: string
   content: string
   timestamp: string
+  attachments?: Attachment[]
 }
 
 interface HubMessage {
@@ -199,6 +214,27 @@ function TokenPage({
 
       case 'messages_data':
         setMessages(message.payload?.messages || [])
+        break
+
+      case 'older_messages_data':
+        const olderMessages = message.payload?.messages || []
+        if (olderMessages.length > 0) {
+          setMessages((prev: Message[]) => {
+            // Create a Set of existing message IDs for fast lookup
+            const existingIds = new Set(prev.map((msg: Message) => msg.id))
+            // Filter out messages that already exist
+            const newMessages = olderMessages.filter((msg: Message) => !existingIds.has(msg.id))
+            // If no new messages, return previous state
+            if (newMessages.length === 0) {
+              return prev
+            }
+            // Combine new messages with existing ones
+            return [...newMessages, ...prev]
+          })
+        }
+        // If we get fewer than 50 messages, there are no more older messages
+        // We'll update a flag or state to indicate this
+        // For now, ChatPage will handle this by checking if messages were actually added
         break
 
       case 'new_message':
@@ -479,10 +515,20 @@ function SpaceListPage({
 
   const saveMemberEdit = () => {
     if (editingMember === null) return
+    if (!editName.trim() || !editSoulMd.trim()) return
+
     const newMembers = [...customMembers]
-    newMembers[editingMember] = { name: editName, soulMd: editSoulMd }
+    if (editingMember === -1) {
+      // Adding new member
+      newMembers.push({ name: editName, soulMd: editSoulMd })
+    } else {
+      // Editing existing member
+      newMembers[editingMember] = { name: editName, soulMd: editSoulMd }
+    }
     setCustomMembers(newMembers)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
   }
 
   const cancelMemberEdit = () => {
@@ -494,6 +540,20 @@ function SpaceListPage({
   const resetToDefaults = () => {
     setCustomMembers(defaultRobots.map(r => ({ ...r })))
   }
+
+  const removeMember = (index: number) => {
+    if (!confirm(t('common.deleteConfirm'))) return
+    const newMembers = [...customMembers]
+    newMembers.splice(index, 1)
+    setCustomMembers(newMembers)
+  }
+
+  const addMember = () => {
+    setEditingMember(-1) // Use -1 to indicate adding new member
+    setEditName('')
+    setEditSoulMd(t('roles.defaultSoulMdTemplate', { ns: 'ai' }))
+  }
+
 
   const getAvatar = (name: string) => name.charAt(0)
 
@@ -582,16 +642,34 @@ function SpaceListPage({
             </div>
             <div className="member-list">
               {customMembers.map((member, index) => (
-                <div key={index} className="member-item editable" onClick={() => startEditMember(index)}>
-                  <div className="member-avatar" style={{ backgroundColor: getColor(member.name) }}>
-                    {getAvatar(member.name)}
+                <div key={index} className="member-item editable">
+                  <div className="member-info" onClick={() => startEditMember(index)}>
+                    <div className="member-avatar" style={{ backgroundColor: getColor(member.name) }}>
+                      {getAvatar(member.name)}
+                    </div>
+                    <div className="member-name">{member.name}</div>
                   </div>
-                  <div className="member-name">{member.name}</div>
-                  <div className="member-edit-icon">✏️</div>
+                  <div className="member-actions">
+                    <button
+                      className="icon-button delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeMember(index);
+                      }}
+                      title={t('common.delete')}
+                    >
+                      🗑️
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
-            <p className="member-hint">{t('spaces.memberEditHint')}</p>
+            <div className="member-actions-footer">
+              <button className="button secondary" onClick={addMember}>
+                + {t('aiMembers.addMember')}
+              </button>
+            </div>
+            <p className="member-hint">{t('spaces.memberEditHint')} {t('spaces.memberAddDeleteHint')}</p>
           </div>
 
           {/* Connection Status */}
@@ -631,7 +709,7 @@ function SpaceListPage({
         {editingMember !== null && (
           <div className="modal-overlay" onClick={cancelMemberEdit}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <h3 className="modal-title">{t('aiMembers.editMember')}</h3>
+              <h3 className="modal-title">{editingMember === -1 ? t('aiMembers.addMember') : t('aiMembers.editMember')}</h3>
               <div className="form-group">
                 <label className="form-label">{t('aiMembers.memberName')}</label>
                 <input
@@ -696,7 +774,13 @@ function ChatPage({
   const [newMessage, setNewMessage] = useState('')
   const [showSpaceList, setShowSpaceList] = useState(false)
   const [showMemberManager, setShowMemberManager] = useState(false)
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(true)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [isUploading, setIsUploading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const sendMessage = useCallback((message: HubMessage) => {
     console.log('[sendMessage] Trying to send:', message.type, 'WebSocket state:', wsRef.current?.readyState)
@@ -728,13 +812,125 @@ function ChatPage({
     }
   }, [spaceId, connectionStatus, spaces, setSpace, sendMessage, navigate])
 
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  // Track if user is at bottom (viewing latest messages)
+  const [isAtBottom, setIsAtBottom] = useState(true)
 
-  const sendChatMessage = () => {
-    if (!newMessage.trim() || !spaceId) return
+  // Check if user is at bottom when scrolling
+  const handleScrollForBottomCheck = useCallback(() => {
+    if (!messagesContainerRef.current) return
+
+    const container = messagesContainerRef.current
+    const scrollTop = container.scrollTop
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+
+    // Check if scrolled to bottom (within 50px)
+    const atBottom = scrollHeight - scrollTop - clientHeight < 50
+    setIsAtBottom(atBottom)
+  }, [])
+
+  // Add scroll listener for bottom detection
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    container.addEventListener('scroll', handleScrollForBottomCheck)
+    return () => {
+      container.removeEventListener('scroll', handleScrollForBottomCheck)
+    }
+  }, [handleScrollForBottomCheck])
+
+  // Scroll to bottom when messages change, but only if user is at bottom
+  // and not when loading older messages
+  useEffect(() => {
+    if (isAtBottom && !isLoadingOlderMessages) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, isLoadingOlderMessages, isAtBottom])
+
+  // Track when older messages are loaded
+  const [lastOlderMessagesRequestId, setLastOlderMessagesRequestId] = useState<string>('')
+  const [olderMessagesReceived, setOlderMessagesReceived] = useState<number>(0)
+
+  // Initialize olderMessagesReceived when messages are first loaded
+  useEffect(() => {
+    if (messages.length > 0 && olderMessagesReceived === 0) {
+      setOlderMessagesReceived(messages.length)
+    }
+  }, [messages, olderMessagesReceived])
+
+  // Reset loading state when messages change (older messages loaded)
+  useEffect(() => {
+    if (messages.length > 0 && isLoadingOlderMessages) {
+      const currentFirstMessageId = messages[0].id
+
+      // Check if first message changed since we requested older messages
+      if (currentFirstMessageId !== lastOlderMessagesRequestId) {
+        setIsLoadingOlderMessages(false)
+
+        // Count how many older messages we received
+        const newMessageCount = messages.length - olderMessagesReceived
+        if (newMessageCount < 50) {
+          // Got fewer than 50 messages, probably no more
+          setHasMoreMessages(false)
+        }
+
+        setOlderMessagesReceived(messages.length)
+      }
+    }
+  }, [messages, isLoadingOlderMessages, lastOlderMessagesRequestId, olderMessagesReceived])
+
+  // Handle scroll to load older messages
+  const handleScroll = useCallback(() => {
+    if (!messagesContainerRef.current || isLoadingOlderMessages || !hasMoreMessages || messages.length === 0) {
+      return
+    }
+
+    const container = messagesContainerRef.current
+    const scrollTop = container.scrollTop
+
+    // If scrolled near the top (within 100px)
+    if (scrollTop < 100) {
+      const oldestMessageId = messages[0].id
+      const previousScrollHeight = container.scrollHeight
+      setIsLoadingOlderMessages(true)
+      setLastOlderMessagesRequestId(oldestMessageId)
+
+      // Store scroll height before loading to restore position
+      const beforeLoadScrollInfo = {
+        scrollHeight: previousScrollHeight,
+        scrollTop: scrollTop
+      }
+
+      sendMessage({
+        type: 'get_older_messages',
+        payload: { spaceId, beforeId: oldestMessageId }
+      })
+
+      // After messages are loaded, restore scroll position
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          const newScrollHeight = messagesContainerRef.current.scrollHeight
+          const heightDiff = newScrollHeight - beforeLoadScrollInfo.scrollHeight
+          messagesContainerRef.current.scrollTop = beforeLoadScrollInfo.scrollTop + heightDiff
+        }
+      }, 100)
+    }
+  }, [messages, isLoadingOlderMessages, hasMoreMessages, spaceId, sendMessage])
+
+  // Add scroll event listener
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    container.addEventListener('scroll', handleScroll)
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
+  }, [handleScroll])
+
+  const sendChatMessage = async () => {
+    if ((!newMessage.trim() && selectedFiles.length === 0) || !spaceId) return
 
     // Check if space is paused
     if (space?.isPaused) {
@@ -742,14 +938,97 @@ function ChatPage({
       return
     }
 
-    sendMessage({
-      type: 'send_message',
-      payload: {
-        spaceId: spaceId,
-        content: newMessage
+    setIsUploading(true)
+
+    try {
+      // Process attachments if any
+      const attachments: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] = []
+
+      for (const file of selectedFiles) {
+        const base64Data = await readFileAsBase64(file)
+        const fileType = detectFileType(file.type)
+
+        attachments.push({
+          type: fileType,
+          originalName: file.name,
+          storedName: generateStoredFileName(file.name),
+          relativePath: '', // Will be set by server
+          fileSize: file.size,
+          mimeType: file.type,
+          data: base64Data, // Include base64 file data
+        })
       }
+
+      sendMessage({
+        type: 'send_message',
+        payload: {
+          spaceId: spaceId,
+          content: newMessage.trim() || (selectedFiles.length > 0 ? `发送 ${selectedFiles.length} 个文件` : ''),
+          attachments: attachments.length > 0 ? attachments : undefined
+        }
+      })
+
+      setNewMessage('')
+      setSelectedFiles([])
+
+      // When user sends a message, scroll to bottom to show their message
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+        }
+      }, 100)
+    } catch (error) {
+      console.error('Error sending message with attachments:', error)
+      alert(t('errors.uploadFailed'))
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Remove data URL prefix (e.g., "data:image/png;base64,")
+        const base64 = result.split(',')[1]
+        resolve(base64)
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
     })
-    setNewMessage('')
+  }
+
+  const detectFileType = (mimeType: string): 'image' | 'document' | 'media' | 'file' => {
+    if (mimeType.startsWith('image/')) return 'image'
+    if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) return 'media'
+    if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text')) return 'document'
+    return 'file'
+  }
+
+  const generateStoredFileName = (originalName: string): string => {
+    const ext = originalName.split('.').pop() || ''
+    const uuid = `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`
+    return ext ? `${uuid}.${ext}` : uuid
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files) {
+      setSelectedFiles(prev => [...prev, ...Array.from(files)])
+    }
+  }
+
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
   const handlePauseSpace = (spaceId: string) => {
@@ -895,7 +1174,13 @@ function ChatPage({
           </div>
         </div>
 
-        <div className="messages-container">
+        <div className="messages-container" ref={messagesContainerRef}>
+          {isLoadingOlderMessages && (
+            <div className="loading-older-messages">
+              <div className="loading-spinner"></div>
+              <span>{t('chat.loadingOlderMessages')}</span>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="empty-state">
               <p>{t('common.noMessages')}</p>
@@ -961,6 +1246,19 @@ function ChatPage({
                       >
                         {msg.content}
                       </ReactMarkdown>
+
+                      {/* Attachments */}
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="message-attachments">
+                          {msg.attachments.map((attachment) => (
+                            <AttachmentView
+                              key={attachment.id}
+                              attachment={attachment}
+                              isUser={memberInfo.isUser}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -971,26 +1269,66 @@ function ChatPage({
         </div>
 
         <div className="chat-input-container">
-          <textarea
-            className="chat-input"
-            placeholder={t('chat.chatInputPlaceholder')}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                sendChatMessage()
-              }
-            }}
-            rows={1}
-          />
-          <button
-            className="send-button"
-            onClick={sendChatMessage}
-            disabled={!newMessage.trim()}
-          >
-            {t('chat.sendButton')}
-          </button>
+          {/* Selected Files Preview */}
+          {selectedFiles.length > 0 && (
+            <div className="selected-files">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="selected-file-item">
+                  <span className="file-name">{file.name}</span>
+                  <span className="file-size">({formatFileSize(file.size)})</span>
+                  <button
+                    className="remove-file-btn"
+                    onClick={() => handleRemoveFile(index)}
+                    disabled={isUploading}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="chat-input-row">
+            {/* File Upload Button */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+              multiple
+              disabled={isUploading}
+            />
+            <button
+              className="attach-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              title={t('chat.attachButton')}
+            >
+              📎
+            </button>
+
+            <textarea
+              className="chat-input"
+              placeholder={t('chat.chatInputPlaceholder')}
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendChatMessage()
+                }
+              }}
+              rows={1}
+              disabled={isUploading}
+            />
+            <button
+              className="send-button"
+              onClick={sendChatMessage}
+              disabled={(!newMessage.trim() && selectedFiles.length === 0) || isUploading}
+            >
+              {isUploading ? t('chat.sending') : t('chat.sendButton')}
+            </button>
+          </div>
         </div>
 
         {/* Member Manager Modal */}
@@ -1175,6 +1513,69 @@ function MemberManagerModal({
       </div>
     </div>
   )
+}
+
+// Attachment View Component
+function AttachmentView({ attachment, isUser }: { attachment: Attachment; isUser: boolean }) {
+  const { t } = useTranslation('common');
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const getFileIcon = (type: string): string => {
+    switch (type) {
+      case 'image': return '🖼️';
+      case 'document': return '📄';
+      case 'media': return '🎬';
+      default: return '📎';
+    }
+  };
+
+  if (attachment.type === 'image') {
+    return (
+      <div className="attachment image-attachment">
+        <div className="attachment-preview">
+          <img
+            src={`/api/files/${attachment.relativePath}`}
+            alt={attachment.originalName}
+            className="attachment-image"
+            loading="lazy"
+            onClick={() => window.open(`/api/files/${attachment.relativePath}`, '_blank')}
+          />
+        </div>
+        <div className="attachment-info">
+          <span className="attachment-name">{getFileIcon(attachment.type)} {attachment.originalName}</span>
+          <span className="attachment-size">({formatFileSize(attachment.fileSize)})</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`attachment file-attachment ${isUser ? 'user' : ''}`}>
+      <div className="attachment-icon">{getFileIcon(attachment.type)}</div>
+      <div className="attachment-details">
+        <div className="attachment-name">{attachment.originalName}</div>
+        <div className="attachment-meta">
+          <span className="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+          <span className="attachment-type">{attachment.mimeType}</span>
+        </div>
+      </div>
+      <a
+        href={`/api/files/${attachment.relativePath}`}
+        download={attachment.originalName}
+        className="attachment-download"
+        title={t('chat.downloadAttachment')}
+      >
+        ⬇️
+      </a>
+    </div>
+  );
 }
 
 // Connection Guard - redirects to token page if not connected

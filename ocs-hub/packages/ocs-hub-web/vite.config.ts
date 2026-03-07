@@ -14,6 +14,7 @@ export default defineConfig({
         ws: true,
       },
       '/health': 'http://localhost:8787',
+      '/api': 'http://localhost:8787',
     },
   },
   build: {

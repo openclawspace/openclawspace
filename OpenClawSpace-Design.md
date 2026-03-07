@@ -1,7 +1,7 @@
 # OpenClawSpace (开爪空间) 设计文档
 
-> **版本**: v2.4 - 新增空间暂停/继续控制
-> **日期**: 2026-02-28
+> **版本**: v2.5 - 新增文件附件系统支持
+> **日期**: 2026-03-05
 > **目标**: Hub 云端服务 + Client 本地服务，Token 配对连接
 
 ---
@@ -77,6 +77,7 @@
 - ✅ **发起人身份系统**：真人在所有空间中拥有统一身份
 - ✅ **公共空间系统**：每个空间有共享目录 `~/.ocs-client/spaces/{spaceId}/`，所有机器人和真人可读写
 - ✅ **空间暂停/继续控制**：发起人可以暂停和恢复空间的 AI 活动
+- ✅ **文件附件系统**：支持在聊天中发送和接收带附件的消息
 
 ### 配置文件
 
@@ -842,15 +843,771 @@ interface HubToBrowserMessage {
 3. **用户消息**：暂停时用户仍可发送消息，但 AI 不会处理
 4. **状态同步**：暂停状态在所有连接的浏览器间同步
 
-## 15. 未来扩展
+## 15. 文件附件系统设计
+
+### 设计概述
+为 OpenClawSpace 添加完整的文件附件支持，包括真人用户上传附件和 AI 成员发送附件。基于现有的 symlink 机制，设计统一的文件存储和访问架构。
+
+### 目录结构设计
+
+```
+~/.ocs-client/spaces/{spaceId}/
+├── agents/                    # Agent 工作空间目录
+│   └── {agentId}/            # 每个 Agent 独立的工作空间
+│       ├── SOUL.md           # Agent 人格定义
+│       ├── space -> ../../space/  # 指向空间共享目录的符号链接
+│       └── ...               # 其他 Agent 私有文件
+├── space/                     # 空间共享目录（所有成员可访问）
+│   ├── workspace/            # 团队协作文件目录（原 shared 目录）
+│   │   ├── documents/        # 协作文档（PRD、设计文档等）
+│   │   ├── images/           # 协作图片和截图
+│   │   ├── code/             # 协作代码片段和脚本
+│   │   └── data/             # 协作数据文件
+│   └── attachments/          # 新增：聊天附件目录
+│       ├── images/           # 图片附件（截图、照片等）
+│       ├── documents/        # 文档附件（PDF、Word、Markdown 等）
+│       ├── media/            # 音视频附件
+│       ├── other/            # 其他类型附件
+│       └── temp/             # 临时上传文件（自动清理）
+└── ...                       # 其他空间相关文件
+```
+
+### 核心设计原则
+
+1. **统一访问路径**：所有成员通过 `./space/` 路径访问空间共享文件
+2. **职责分离**：
+   - `workspace/`：团队协作过程中产生的文件
+   - `attachments/`：聊天消息中发送的附件
+3. **符号链接机制**：每个 Agent 工作空间有 `space -> ../../space/` 符号链接
+4. **路径一致性**：真人和 AI 成员使用相同的路径格式引用文件
+
+### Symlink 机制详解
+
+#### 现有架构回顾
+当前每个 Agent 工作空间有 `shared -> ../../shared/` 符号链接，指向团队共享目录。
+
+#### 新架构升级
+将 `shared` 目录升级为 `space` 目录，包含两个子目录：
+- `workspace/`（原 `shared/` 内容）
+- `attachments/`（新增附件目录）
+
+每个 Agent 工作空间的符号链接更新为：
+```bash
+# Agent 工作空间内
+ls -la
+space -> ../../space/          # 指向空间共享目录
+
+# 通过符号链接访问
+./space/workspace/documents/   # 团队协作文档
+./space/attachments/images/    # 聊天图片附件
+```
+
+### 数据模型扩展
+
+```typescript
+// 消息模型扩展
+interface Message {
+  id: string;
+  spaceId: string;
+  senderId: string;    // 'user' 或 memberId
+  content: string;
+  timestamp: string;
+  attachments?: ChatAttachment[];  // 新增：聊天附件列表
+}
+
+// 聊天附件模型
+interface ChatAttachment {
+  id: string;
+  messageId: string;
+  type: 'image' | 'document' | 'media' | 'file';
+  originalName: string;    // 原始文件名
+  storedName: string;      // 存储文件名（UUID.扩展名）
+  relativePath: string;    // 相对路径，如 "./space/attachments/images/uuid.jpg"
+  fileSize: number;        // 文件大小（字节）
+  mimeType: string;        // MIME 类型
+  thumbnailPath?: string;  // 缩略图路径（针对图片）
+  createdAt: string;
+}
+
+// 注意：文件实际存储在 attachments/ 目录，数据库只存储元数据
+```
+
+### 文件流向设计
+
+#### 场景1：真人用户发送附件
+```
+用户选择文件
+    ↓
+前端上传（分块、进度显示）
+    ↓
+保存到 ./space/attachments/{type}/{uuid.filename}
+    ↓
+创建消息记录（包含附件元数据）
+    ↓
+通过 WebSocket 发送到所有客户端
+```
+
+#### 场景2：AI 成员发送附件
+```
+AI 访问任何可读文件
+    （可以是 ./space/workspace/、Agent 私有文件、系统文件等）
+    ↓
+复制到 ./space/attachments/{type}/{uuid.filename}
+    ↓
+创建消息记录（包含附件元数据）
+    ↓
+通过 WebSocket 发送到所有客户端
+```
+
+#### 场景3：引用团队协作文件
+```
+AI 或真人在聊天中引用现有文件
+    ↓
+直接使用文件路径，如 "./space/workspace/documents/PRD-v1.md"
+    ↓
+创建消息记录（可包含文件引用）
+    ↓
+前端根据路径显示文件信息和预览
+```
+
+### 实现细节
+
+#### 1. 目录创建和初始化
+```typescript
+// 创建空间时初始化目录结构
+async function initializeSpaceDirectories(spaceId: string): Promise<void> {
+  const spaceRoot = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId);
+
+  // 1. 创建 space 目录结构
+  const spaceDir = path.join(spaceRoot, 'space');
+  const workspaceDir = path.join(spaceDir, 'workspace');
+  const attachmentsDir = path.join(spaceDir, 'attachments');
+
+  // workspace 子目录（现有功能）
+  const workspaceSubdirs = ['documents', 'images', 'code', 'data'];
+  for (const subdir of workspaceSubdirs) {
+    const dirPath = path.join(workspaceDir, subdir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  // attachments 子目录（新增功能）
+  const attachmentsSubdirs = ['images', 'documents', 'media', 'other', 'temp'];
+  for (const subdir of attachmentsSubdirs) {
+    const dirPath = path.join(attachmentsDir, subdir);
+    if (!fs.existsSync(dirPath)) {
+      fs.mkdirSync(dirPath, { recursive: true });
+    }
+  }
+
+  // 2. 创建 agents 目录
+  const agentsDir = path.join(spaceRoot, 'agents');
+  if (!fs.existsSync(agentsDir)) {
+    fs.mkdirSync(agentsDir, { recursive: true });
+  }
+}
+```
+
+#### 2. 创建 Agent 时的 Symlink 设置
+```typescript
+// 创建 Agent 时设置符号链接
+async function setupAgentSymlinks(agentId: string, spaceId: string): Promise<void> {
+  const agentDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+
+  // 确保 Agent 目录存在
+  if (!fs.existsSync(agentDir)) {
+    fs.mkdirSync(agentDir, { recursive: true });
+  }
+
+  // 创建 space 符号链接
+  const spaceLinkPath = path.join(agentDir, 'space');
+  const spaceTargetPath = path.join('..', '..', 'space'); // 指向 ../../space/
+
+  // 删除已存在的符号链接
+  if (fs.existsSync(spaceLinkPath)) {
+    fs.unlinkSync(spaceLinkPath);
+  }
+
+  // 创建新的符号链接
+  fs.symlinkSync(spaceTargetPath, spaceLinkPath, 'dir');
+  console.log(`[Attachment] Created symlink: ${spaceLinkPath} -> ${spaceTargetPath}`);
+}
+```
+
+#### 3. 真人附件上传处理
+```typescript
+// 处理真人用户文件上传
+async function handleUserFileUpload(params: {
+  spaceId: string;
+  file: {
+    name: string;
+    size: number;
+    type: string;
+    data: Buffer;  // 或 base64 字符串
+  };
+  senderId: 'user';
+  description?: string;
+}): Promise<Message> {
+  // 1. 验证文件
+  validateFile(params.file);
+
+  // 2. 确定存储目录和文件名
+  const fileType = detectFileType(params.file.type);
+  const subdir = getAttachmentSubdir(fileType);
+  const storedName = generateStoredFileName(params.file.name);
+  const relativePath = `./space/attachments/${subdir}/${storedName}`;
+
+  // 3. 保存文件
+  const fullPath = resolveSpacePath(params.spaceId, relativePath);
+  await fs.promises.writeFile(fullPath, params.file.data);
+
+  // 4. 生成缩略图（如果是图片）
+  let thumbnailPath: string | undefined;
+  if (fileType === 'image') {
+    thumbnailPath = await generateImageThumbnail(fullPath, relativePath);
+  }
+
+  // 5. 创建消息记录
+  const message = await createMessageWithAttachment({
+    spaceId: params.spaceId,
+    senderId: params.senderId,
+    content: params.description || `发送文件: ${params.file.name}`,
+    attachments: [{
+      type: fileType,
+      originalName: params.file.name,
+      storedName,
+      relativePath,
+      fileSize: params.file.size,
+      mimeType: params.file.type,
+      thumbnailPath
+    }]
+  });
+
+  return message;
+}
+```
+
+#### 4. AI 成员发送附件
+```typescript
+// AI 成员发送附件
+async function agentSendAttachment(params: {
+  agentId: string;
+  spaceId: string;
+  sourcePath: string;  // AI 能访问的任何文件路径
+  description?: string;
+}): Promise<Message> {
+  const agent = getAgent(params.agentId);
+
+  // 1. 读取源文件
+  const fileData = await agent.readFile(params.sourcePath);
+  const fileStats = await agent.getFileStats(params.sourcePath);
+
+  // 2. 确定存储信息
+  const originalName = path.basename(params.sourcePath);
+  const fileType = detectFileType(fileStats.mimeType);
+  const subdir = getAttachmentSubdir(fileType);
+  const storedName = generateStoredFileName(originalName);
+  const relativePath = `./space/attachments/${subdir}/${storedName}`;
+
+  // 3. 通过 Agent 的 space 符号链接保存文件
+  // Agent 工作空间中有 ./space -> ../../space/ 符号链接
+  const agentRelativePath = `./space/attachments/${subdir}/${storedName}`;
+  await agent.writeFile(agentRelativePath, fileData);
+
+  // 4. 创建消息记录
+  const message = await createMessageWithAttachment({
+    spaceId: params.spaceId,
+    senderId: agent.memberId,
+    content: params.description || `发送文件: ${originalName}`,
+    attachments: [{
+      type: fileType,
+      originalName,
+      storedName,
+      relativePath,
+      fileSize: fileStats.size,
+      mimeType: fileStats.mimeType,
+      thumbnailPath: fileType === 'image'
+        ? await generateImageThumbnailFromBuffer(fileData, relativePath)
+        : undefined
+    }]
+  });
+
+  return message;
+}
+```
+
+### WebSocket 协议扩展
+
+```typescript
+// 新增 WebSocket 消息类型
+interface WebSocketProtocol {
+  // 文件上传相关
+  'file.upload.start': {
+    request: {
+      spaceId: string;
+      fileName: string;
+      fileSize: number;
+      mimeType: string;
+    };
+    response: {
+      uploadId: string;
+      chunkSize: number;
+    };
+  };
+
+  'file.upload.chunk': {
+    request: {
+      uploadId: string;
+      chunkIndex: number;
+      chunkData: string;  // base64
+      isLastChunk: boolean;
+    };
+    response: {
+      progress: number;  // 0-100
+      storedPath?: string;  // 最后一块返回存储路径
+    };
+  };
+
+  'file.upload.complete': {
+    request: {
+      uploadId: string;
+      description?: string;
+    };
+    response: Message;  // 包含附件的完整消息
+  };
+
+  // 文件下载相关
+  'file.download': {
+    request: {
+      spaceId: string;
+      attachmentId: string;
+    };
+    response: {
+      fileData: string;  // base64
+      fileName: string;
+      mimeType: string;
+      fileSize: number;
+    };
+  };
+
+  // 文件预览相关
+  'file.preview': {
+    request: {
+      spaceId: string;
+      relativePath: string;  // 如 "./space/attachments/images/xxx.jpg"
+      maxWidth?: number;
+      maxHeight?: number;
+    };
+    response: {
+      previewData: string;  // base64 缩略图或文本预览
+      mimeType: string;
+    };
+  };
+}
+```
+
+### 前端设计
+
+#### 文件上传组件
+```typescript
+// 前端文件上传组件
+class FileUploadComponent {
+  async uploadFile(file: File): Promise<UploadResult> {
+    // 1. 开始上传
+    const { uploadId, chunkSize } = await this.startUpload({
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type
+    });
+
+    // 2. 分块上传
+    const chunks = Math.ceil(file.size / chunkSize);
+    for (let i = 0; i < chunks; i++) {
+      const chunk = file.slice(i * chunkSize, (i + 1) * chunkSize);
+      const chunkData = await this.readChunkAsBase64(chunk);
+
+      const { progress } = await this.uploadChunk({
+        uploadId,
+        chunkIndex: i,
+        chunkData,
+        isLastChunk: i === chunks - 1
+      });
+
+      // 更新进度条
+      this.updateProgress(progress);
+    }
+
+    // 3. 完成上传
+    const message = await this.completeUpload(uploadId, file.name);
+    return { success: true, message };
+  }
+
+  // 拖放上传支持
+  setupDragAndDrop(dropZone: HTMLElement): void {
+    dropZone.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('drag-over');
+
+      const files = e.dataTransfer?.files;
+      if (files) {
+        for (const file of files) {
+          await this.uploadFile(file);
+        }
+      }
+    });
+  }
+
+  // 截图上传
+  async uploadScreenshot(): Promise<void> {
+    // 使用浏览器截图 API
+    const canvas = await html2canvas(document.body);
+    const blob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob(resolve, 'image/png');
+    });
+
+    const file = new File([blob], `screenshot-${Date.now()}.png`, {
+      type: 'image/png'
+    });
+
+    await this.uploadFile(file);
+  }
+}
+```
+
+#### 附件显示组件
+```typescript
+// 附件显示组件
+class AttachmentDisplayComponent {
+  renderAttachment(attachment: ChatAttachment): HTMLElement {
+    const type = attachment.type;
+
+    switch (type) {
+      case 'image':
+        return this.renderImageAttachment(attachment);
+      case 'document':
+        return this.renderDocumentAttachment(attachment);
+      case 'media':
+        return this.renderMediaAttachment(attachment);
+      default:
+        return this.renderGenericAttachment(attachment);
+    }
+  }
+
+  private renderImageAttachment(attachment: ChatAttachment): HTMLElement {
+    // 使用缩略图或原图
+    const imageUrl = attachment.thumbnailPath
+      ? getFileUrl(attachment.thumbnailPath)
+      : getFileUrl(attachment.relativePath);
+
+    return html`
+      <div class="attachment image-attachment">
+        <div class="attachment-preview">
+          <img
+            src="${imageUrl}"
+            alt="${attachment.originalName}"
+            loading="lazy"
+            onclick="openImageViewer('${getFileUrl(attachment.relativePath)}')"
+          />
+          <div class="attachment-overlay">
+            <button class="btn-download" onclick="downloadAttachment('${attachment.id}')">
+              ⬇️ 下载
+            </button>
+            <button class="btn-view" onclick="openImageViewer('${getFileUrl(attachment.relativePath)}')">
+              🔍 查看原图
+            </button>
+          </div>
+        </div>
+        <div class="attachment-info">
+          <div class="filename">${attachment.originalName}</div>
+          <div class="filemeta">
+            <span class="filesize">${formatFileSize(attachment.fileSize)}</span>
+            <span class="filetype">${attachment.mimeType}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+}
+```
+
+### 安全设计
+
+#### 文件类型验证
+```typescript
+const ALLOWED_FILE_TYPES = {
+  images: [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/svg+xml'
+  ],
+  documents: [
+    'application/pdf',
+    'text/plain',
+    'text/markdown',
+    'application/json',
+    'text/csv',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  ],
+  media: [
+    'audio/mpeg',
+    'audio/wav',
+    'video/mp4',
+    'video/webm'
+  ],
+  other: [
+    'application/zip',
+    'application/x-tar',
+    'application/x-gzip'
+  ]
+};
+
+const MAX_FILE_SIZES = {
+  image: 10 * 1024 * 1024,     // 10MB
+  document: 20 * 1024 * 1024,  // 20MB
+  media: 50 * 1024 * 1024,     // 50MB
+  other: 5 * 1024 * 1024,      // 5MB
+  default: 5 * 1024 * 1024     // 5MB
+};
+```
+
+#### 路径安全验证
+```typescript
+function validateFilePath(relativePath: string): boolean {
+  // 1. 必须是以 ./space/ 开头的相对路径
+  if (!relativePath.startsWith('./space/')) {
+    return false;
+  }
+
+  // 2. 防止路径遍历攻击
+  if (relativePath.includes('..') || relativePath.includes('//')) {
+    return false;
+  }
+
+  // 3. 验证路径在允许的目录内
+  const allowedPrefixes = [
+    './space/workspace/',
+    './space/attachments/'
+  ];
+
+  if (!allowedPrefixes.some(prefix => relativePath.startsWith(prefix))) {
+    return false;
+  }
+
+  // 4. 验证文件扩展名
+  const extension = path.extname(relativePath).toLowerCase();
+  const allowedExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf', '.md', '.txt', '.json', '.csv', '.doc', '.docx', '.xls', '.xlsx', '.zip'];
+
+  if (!allowedExtensions.includes(extension)) {
+    return false;
+  }
+
+  return true;
+}
+```
+
+### 清理和维护机制
+
+#### 定期清理
+```typescript
+class AttachmentCleanupService {
+  // 清理临时文件（超过1小时）
+  async cleanupTempFiles(spaceId: string): Promise<void> {
+    const tempDir = getSpaceAttachmentsDir(spaceId, 'temp');
+    const now = Date.now();
+    const maxAge = 60 * 60 * 1000; // 1小时
+
+    const files = await fs.promises.readdir(tempDir);
+    for (const file of files) {
+      const filePath = path.join(tempDir, file);
+      const stats = await fs.promises.stat(filePath);
+
+      if (now - stats.mtimeMs > maxAge) {
+        await fs.promises.unlink(filePath);
+      }
+    }
+  }
+
+  // 清理旧附件（可配置保留时间）
+  async cleanupOldAttachments(spaceId: string, maxAgeDays: number = 30): Promise<void> {
+    const attachmentsDir = getSpaceAttachmentsDir(spaceId);
+    const maxAge = maxAgeDays * 24 * 60 * 60 * 1000;
+    const cutoffDate = new Date(Date.now() - maxAge);
+
+    // 获取需要清理的附件ID
+    const oldAttachments = await this.getAttachmentsOlderThan(spaceId, cutoffDate);
+
+    for (const attachment of oldAttachments) {
+      // 删除文件
+      const filePath = resolveSpacePath(spaceId, attachment.relativePath);
+      if (fs.existsSync(filePath)) {
+        await fs.promises.unlink(filePath);
+      }
+
+      // 删除缩略图
+      if (attachment.thumbnailPath) {
+        const thumbPath = resolveSpacePath(spaceId, attachment.thumbnailPath);
+        if (fs.existsSync(thumbPath)) {
+          await fs.promises.unlink(thumbPath);
+        }
+      }
+
+      // 删除数据库记录
+      await this.deleteAttachmentRecord(attachment.id);
+    }
+  }
+
+  // 空间删除时的清理
+  async cleanupSpaceAttachments(spaceId: string): Promise<void> {
+    const spaceDir = getSpaceDir(spaceId);
+    if (fs.existsSync(spaceDir)) {
+      await fs.promises.rm(spaceDir, { recursive: true });
+    }
+    await this.deleteAllAttachmentRecords(spaceId);
+  }
+}
+```
+
+### 实施路线图
+
+#### 阶段1：基础架构升级（1周）
+1. ✅ 升级目录结构：`shared/` → `space/workspace/`
+2. ✅ 新增 `space/attachments/` 目录结构
+3. ✅ 更新 Agent symlink：`shared` → `space`
+4. ✅ 更新 SOUL.md 中的路径说明
+
+#### 阶段2：后端附件处理（2周）
+1. ✅ 实现文件上传 API（分块上传、进度跟踪）
+2. ✅ 实现文件存储和元数据管理
+3. ✅ 实现缩略图生成服务
+4. ✅ 实现安全验证和清理机制
+
+#### 阶段3：前端附件功能（2周）
+1. ✅ 文件上传组件（拖放、选择、进度显示）
+2. ✅ 附件显示组件（预览、下载、查看）
+3. ✅ 截图工具集成
+4. ✅ 移动端适配
+
+#### 阶段4：AI 附件发送（1周）
+1. ✅ 扩展 AI 工具支持文件发送
+2. ✅ 实现文件复制到 attachments 目录
+3. ✅ 统一附件消息格式
+4. ✅ 测试和验证
+
+#### 阶段5：优化和扩展（1-2周）
+1. ⭕ 性能优化（缓存、懒加载、压缩）
+2. ⭕ 存储配额管理
+3. ⭕ 文件搜索和过滤
+4. ⭕ 备份和恢复工具
+
+### 与现有功能集成
+
+#### 1. 与沉默检测集成
+```typescript
+class EnhancedAIDiscussionController {
+  async handleSilence(silenceDuration: number): Promise<void> {
+    // 原有沉默检测逻辑...
+
+    // 新增：检查是否有需要分享的文件成果
+    const filesToShare = await this.checkForNewFiles();
+    if (filesToShare.length > 0) {
+      await this.shareFilesInChat(filesToShare);
+    }
+  }
+}
+```
+
+#### 2. 与团队协作集成
+```typescript
+// AI 在 workspace 中创建文件后，可选择分享到聊天
+async function shareWorkspaceFileInChat(params: {
+  agentId: string;
+  workspaceFilePath: string;  // 如 "./space/workspace/documents/PRD.md"
+  description?: string;
+}): Promise<Message> {
+  // 1. 检查文件是否存在
+  const fileExists = await agent.fileExists(params.workspaceFilePath);
+  if (!fileExists) {
+    throw new Error(`文件不存在: ${params.workspaceFilePath}`);
+  }
+
+  // 2. 直接在聊天中引用 workspace 文件（不复制到 attachments）
+  const message = await createMessageWithFileReference({
+    spaceId: params.spaceId,
+    senderId: params.agentId,
+    content: params.description || `分享文件: ${path.basename(params.workspaceFilePath)}`,
+    fileReference: {
+      type: 'workspace',
+      relativePath: params.workspaceFilePath,
+      description: '团队协作文件'
+    }
+  });
+
+  return message;
+}
+```
+
+### 监控和日志
+
+```typescript
+// 附件操作日志
+interface AttachmentLogEntry {
+  timestamp: string;
+  spaceId: string;
+  userId: string;      // 'user' 或 agentId
+  operation: 'upload' | 'download' | 'send' | 'delete' | 'preview';
+  filePath: string;
+  fileSize: number;
+  success: boolean;
+  durationMs: number;
+  error?: string;
+}
+
+// 存储使用统计
+interface StorageUsageReport {
+  spaceId: string;
+  totalSize: number;
+  workspaceSize: number;
+  attachmentsSize: number;
+  fileCount: number;
+  byFileType: Record<string, number>;
+  byUser: Record<string, number>;
+  lastCleanup: string;
+}
+
+// 性能监控
+interface AttachmentPerformanceMetrics {
+  uploadTimes: number[];      // 上传耗时（ms）
+  downloadTimes: number[];    // 下载耗时（ms）
+  previewTimes: number[];     // 预览生成耗时（ms）
+  successRate: number;        // 操作成功率
+  cacheHitRate: number;       // 缓存命中率
+}
+```
+
+## 16. 未来扩展
 
 - [ ] 支持多用户（多人同时连接同一个 Client）
 - [ ] 支持自定义 Hub URL
 - [ ] 支持更多 AI 模型
-- [ ] 支持文件/图片上传
-- [ ] 支持语音消息
-- [ ] 支持导出聊天记录
-- [ ] 支持 AI 成员头像自定义
+- [ ] 支持语音消息（保存到 `./space/attachments/media/`）
+- [ ] 支持导出聊天记录（含附件文件）
+- [ ] 支持 AI 成员头像自定义（使用 `./space/workspace/images/avatars/`）
+- [ ] 支持文件版本控制（git 集成）
+- [ ] 支持文件协作编辑（实时协作）
+- [ ] 支持文件智能分类和标签
+- [ ] 支持跨空间文件共享
+- [ ] 支持云存储集成（可选）
 
 ---
 

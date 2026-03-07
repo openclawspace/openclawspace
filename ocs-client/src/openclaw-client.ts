@@ -18,6 +18,11 @@ export interface AgentResponse {
   done: boolean;
 }
 
+export interface AttachmentRequest {
+  path: string;
+  type: 'image' | 'document' | 'media' | 'file';
+}
+
 /**
  * OpenClaw Client - 调用 openclaw CLI 管理 Agent
  */
@@ -47,13 +52,76 @@ export class OpenClawClient {
   /**
    * 创建 Agent
    */
-  async createAgent(name: string, soulMd: string): Promise<OpenClawAgent> {
+  async createAgent(name: string, soulMd: string, spaceId?: string): Promise<OpenClawAgent> {
     const agentId = this.normalizeAgentId(name);
-    const workspaceDir = path.join(this.baseDir, 'workspaces', agentId);
 
-    // 确保工作目录存在
-    if (!fs.existsSync(workspaceDir)) {
-      fs.mkdirSync(workspaceDir, { recursive: true });
+    let workspaceDir: string;
+
+    if (spaceId) {
+      // 使用新的目录结构：~/.ocs-client/spaces/{spaceId}/agents/{agentId}/
+      workspaceDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+
+      // 确保agent workspace目录存在
+      if (!fs.existsSync(workspaceDir)) {
+        fs.mkdirSync(workspaceDir, { recursive: true });
+      }
+
+      // 创建空间目录结构：~/.ocs-client/spaces/{spaceId}/space/
+      const spaceDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'space');
+      if (!fs.existsSync(spaceDir)) {
+        fs.mkdirSync(spaceDir, { recursive: true });
+
+        // 创建 workspace 目录（原 shared 目录）
+        const workspaceDir = path.join(spaceDir, 'workspace');
+        fs.mkdirSync(workspaceDir, { recursive: true });
+
+        // 在 workspace 目录中创建子目录
+        const workspaceSubdirs = ['documents', 'images', 'code', 'data'];
+        for (const subdir of workspaceSubdirs) {
+          const subdirPath = path.join(workspaceDir, subdir);
+          if (!fs.existsSync(subdirPath)) {
+            fs.mkdirSync(subdirPath, { recursive: true });
+          }
+        }
+
+        // 创建 attachments 目录（新增聊天附件目录）
+        const attachmentsDir = path.join(spaceDir, 'attachments');
+        fs.mkdirSync(attachmentsDir, { recursive: true });
+
+        // 在 attachments 目录中创建子目录
+        const attachmentsSubdirs = ['images', 'documents', 'media', 'other', 'temp'];
+        for (const subdir of attachmentsSubdirs) {
+          const subdirPath = path.join(attachmentsDir, subdir);
+          if (!fs.existsSync(subdirPath)) {
+            fs.mkdirSync(subdirPath, { recursive: true });
+          }
+        }
+      }
+
+      // 在agent workspace中创建space目录的symlink，指向空间共享目录
+      const spaceLinkPath = path.join(workspaceDir, 'space');
+      const spaceTargetPath = path.join('..', '..', 'space'); // 指向 ../../space/
+      try {
+        // 如果已存在，先删除
+        if (fs.existsSync(spaceLinkPath)) {
+          fs.unlinkSync(spaceLinkPath);
+        }
+        // 创建symlink
+        fs.symlinkSync(spaceTargetPath, spaceLinkPath, 'dir');
+        console.log(`[OpenClaw] Created symlink: ${spaceLinkPath} -> ${spaceTargetPath}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[OpenClaw] Failed to create symlink: ${errorMessage}`);
+        // 继续执行，不因为symlink失败而中断
+      }
+    } else {
+      // 如果没有spaceId，使用默认的OpenClaw workspace目录
+      workspaceDir = path.join(this.baseDir, 'workspaces', agentId);
+
+      // 确保工作目录存在
+      if (!fs.existsSync(workspaceDir)) {
+        fs.mkdirSync(workspaceDir, { recursive: true });
+      }
     }
 
     // 创建 agent（使用非交互模式）- 使用120秒超时，因为初始化可能需要较长时间
@@ -135,6 +203,63 @@ export class OpenClawClient {
         reject(err);
       });
     });
+  }
+
+  /**
+   * 发送消息给 Agent 并获取回复，同时解析附件请求
+   */
+  async sendMessageWithAttachments(agentId: string, message: string): Promise<{ text: string; attachments?: AttachmentRequest[] }> {
+    const response = await this.sendMessage(agentId, message);
+
+    // 解析 send_attachment 工具调用
+    const attachments = this.parseAttachmentRequests(response);
+
+    // 移除工具调用标记，保留自然语言回复
+    const cleanText = this.removeToolCalls(response);
+
+    return { text: cleanText, attachments };
+  }
+
+  /**
+   * 解析附件请求
+   * 检测 AI 回复中提到的文件路径，自动处理为附件
+   */
+  private parseAttachmentRequests(response: string): AttachmentRequest[] | undefined {
+    const attachments: AttachmentRequest[] = [];
+
+    // 从回复中提取文件路径（支持 ./space/workspace/ 开头的路径）
+    // 匹配格式：./space/workspace/.../文件名.扩展名
+    const pathRegex = /\.\/space\/workspace\/[^\s"'\n]+/g;
+    const matches = response.match(pathRegex);
+
+    if (matches) {
+      for (const filePath of matches) {
+        // 根据文件扩展名判断类型
+        const ext = filePath.toLowerCase().split('.').pop() || '';
+        let type: 'image' | 'document' | 'media' | 'file' = 'file';
+
+        if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'bmp', 'webp'].includes(ext)) {
+          type = 'image';
+        } else if (['md', 'txt', 'json', 'js', 'ts', 'html', 'css', 'pdf', 'doc', 'docx'].includes(ext)) {
+          type = 'document';
+        } else if (['mp3', 'mp4', 'wav', 'avi', 'mov'].includes(ext)) {
+          type = 'media';
+        }
+
+        attachments.push({ path: filePath, type });
+      }
+    }
+
+    return attachments.length > 0 ? attachments : undefined;
+  }
+
+  /**
+   * 清理回复文本，保持自然语言
+   */
+  private removeToolCalls(response: string): string {
+    // 这里不需要移除任何内容，因为 AI 只是自然语言描述
+    // 保持回复原样
+    return response.trim();
   }
 
   /**

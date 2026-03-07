@@ -1,5 +1,5 @@
 import { SpaceManager } from './space-manager.js';
-import { Member, Message } from './database.js';
+import { Member, Message, Attachment } from './database.js';
 import { getLogger } from './logger.js';
 import { getUserProfileManager } from './user-profile.js';
 
@@ -221,7 +221,7 @@ export class AIDiscussionController {
   private async askForIntention(member: Member, context: DiscussionContext): Promise<SpeakIntention | null> {
     try {
       const prompt = this.buildIntentionPrompt(member, context);
-      const response = await this.spaceManager.sendMessageToMemberIfNotPaused(member.id, prompt);
+      const { text: response } = await this.spaceManager.sendMessageToMemberIfNotPaused(member.id, prompt);
 
       return this.parseIntentionResponse(member, response);
     } catch (err) {
@@ -298,10 +298,10 @@ ${recentDialogue}
   /**
    * 发送消息
    */
-  private async sendMessage(member: Member, content: string): Promise<void> {
+  private async sendMessage(member: Member, content: string, attachments?: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[]): Promise<void> {
     // 这里需要通过回调或事件通知 HubClient 发送消息
     // 暂时通过添加消息到数据库并触发事件
-    this.spaceManager.addMessage(this.spaceId, member.id, content);
+    this.spaceManager.addMessage(this.spaceId, member.id, content, attachments);
     this.onActivity();
 
     // 触发消息事件（HubClient 需要监听这个）
@@ -383,15 +383,15 @@ ${recentDialogue}
         const prompt = `${triggerMember.name} 说："${triggerContent}"
 
 请回应（简短，1-2句话）：`;
-        const response = await this.spaceManager.sendMessageToMemberIfNotPaused(responder.id, prompt);
-        await this.sendMessage(responder, response);
+        const { text: response, attachments } = await this.spaceManager.sendMessageToMemberIfNotPaused(responder.id, prompt);
+        await this.sendMessage(responder, response, attachments);
       }
     } else {
       // 初始讨论，随机选一个成员开场
       const starter = members[Math.floor(Math.random() * members.length)];
       const prompt = '请开始一个话题，或者提出一个你想讨论的问题（简短）：';
-      const response = await this.spaceManager.sendMessageToMemberIfNotPaused(starter.id, prompt);
-      await this.sendMessage(starter, response);
+      const { text: response, attachments } = await this.spaceManager.sendMessageToMemberIfNotPaused(starter.id, prompt);
+      await this.sendMessage(starter, response, attachments);
     }
   }
 

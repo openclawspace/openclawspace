@@ -29,6 +29,7 @@ const sessions = new Map<string, {
 interface RelayMessage {
   type: string;
   payload?: any;
+  [key: string]: any;
 }
 
 // Helper function to serve static files
@@ -60,6 +61,66 @@ function serveStaticFile(filePath: string, res: http.ServerResponse): boolean {
   return false;
 }
 
+// Base directory for file storage (ocs-client spaces directory)
+const SPACES_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.ocs-client', 'spaces');
+
+// Helper function to safely serve files from spaces directory
+function serveSpaceFile(filePath: string, res: http.ServerResponse, downloadName?: string): boolean {
+  try {
+    // Normalize and resolve the path to prevent directory traversal
+    const normalizedPath = path.normalize(filePath);
+    const fullPath = path.join(SPACES_DIR, normalizedPath);
+
+    // Security check: ensure the resolved path is within SPACES_DIR
+    const resolvedPath = path.resolve(fullPath);
+    const resolvedSpacesDir = path.resolve(SPACES_DIR);
+    if (!resolvedPath.startsWith(resolvedSpacesDir)) {
+      console.error('Security: attempted directory traversal:', filePath);
+      return false;
+    }
+
+    if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+      const ext = path.extname(resolvedPath).toLowerCase();
+      const contentTypes: Record<string, string> = {
+        '.html': 'text/html',
+        '.js': 'application/javascript',
+        '.css': 'text/css',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.ico': 'image/x-icon',
+        '.txt': 'text/plain',
+        '.md': 'text/markdown',
+        '.pdf': 'application/pdf',
+        '.doc': 'application/msword',
+        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      };
+      const contentType = contentTypes[ext] || 'application/octet-stream';
+      const content = fs.readFileSync(resolvedPath);
+
+      const headers: Record<string, string> = {
+        'Content-Type': contentType,
+        'Access-Control-Allow-Origin': '*'
+      };
+
+      // Add download header if download name is provided
+      if (downloadName) {
+        headers['Content-Disposition'] = `attachment; filename="${downloadName}"`;
+      }
+
+      res.writeHead(200, headers);
+      res.end(content);
+      return true;
+    }
+  } catch (err) {
+    console.error('Error serving space file:', err);
+  }
+  return false;
+}
+
 // Create HTTP server
 const server = http.createServer((req, res) => {
   const parsedUrl = url.parse(req.url || '', true);
@@ -73,6 +134,24 @@ const server = http.createServer((req, res) => {
       version: '1.0.0',
       activeSessions: sessions.size
     }));
+    return;
+  }
+
+  // API: File download endpoint
+  if (parsedUrl.pathname?.startsWith('/api/files/')) {
+    const filePath = parsedUrl.pathname.slice('/api/files/'.length);
+    const downloadName = parsedUrl.query.download as string;
+
+    if (filePath) {
+      // URL decode the file path
+      const decodedPath = decodeURIComponent(filePath);
+      if (serveSpaceFile(decodedPath, res, downloadName)) {
+        return;
+      }
+    }
+
+    res.writeHead(404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'File not found' }));
     return;
   }
 

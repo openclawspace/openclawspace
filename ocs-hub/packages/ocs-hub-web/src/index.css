@@ -272,6 +272,30 @@ body {
   padding: 16px 0;
 }
 
+.loading-older-messages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  color: #666;
+  font-size: 14px;
+}
+
+.loading-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3498db;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
 .message {
   display: flex;
   gap: 12px;
@@ -1038,4 +1062,238 @@ body {
     padding: 6px 12px;
     font-size: 12px;
   }
+}
+
+/* Updated member item styles for create team page */
+.member-item.editable {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: background 0.2s;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 0 -8px;
+}
+
+.member-item.editable .member-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.member-item.editable .member-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.member-item.editable .icon-button.delete {
+  opacity: 0.5;
+  transition: opacity 0.2s;
+}
+
+.member-item.editable:hover .icon-button.delete {
+  opacity: 1;
+}
+
+.member-item.editable .icon-button.delete:hover {
+  background-color: #fee;
+  color: #c33;
+}
+
+.member-actions-footer {
+  margin-top: 16px;
+  display: flex;
+  justify-content: center;
+}
+
+.member-actions-footer .button.secondary {
+  background-color: #f8f9fa;
+  color: #333;
+  border: 1px solid #ddd;
+}
+
+.member-actions-footer .button.secondary:hover {
+  background-color: #e9ecef;
+  border-color: #ccc;
+}
+
+/* Attachments */
+.message-attachments {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.attachment {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.attachment.image-attachment {
+  max-width: 300px;
+}
+
+.attachment-preview {
+  position: relative;
+  cursor: pointer;
+}
+
+.attachment-image {
+  width: 100%;
+  max-height: 200px;
+  object-fit: cover;
+  border-radius: 8px 8px 0 0;
+}
+
+.attachment-info {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.attachment-name {
+  font-weight: 500;
+  color: inherit;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-size {
+  color: #888;
+  font-size: 12px;
+}
+
+.file-attachment {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: #f8f9fa;
+  border: 1px solid #e0e0e0;
+}
+
+.file-attachment.user {
+  background: rgba(255, 255, 255, 0.15);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.attachment-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+
+.attachment-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.attachment-details .attachment-name {
+  font-size: 14px;
+  margin-bottom: 4px;
+}
+
+.attachment-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: #888;
+}
+
+.attachment-download {
+  padding: 8px;
+  background: #4a90d9;
+  color: white;
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.attachment-download:hover {
+  background: #357abd;
+}
+
+/* Chat Input with Attachments */
+.chat-input-container {
+  flex-direction: column;
+}
+
+.chat-input-row {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+}
+
+.attach-button {
+  padding: 12px;
+  background: #f8f9fa;
+  border: 2px solid #e0e0e0;
+  border-radius: 16px;
+  font-size: 18px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.attach-button:hover {
+  background: #e8e8e8;
+  border-color: #d0d0d0;
+}
+
+.attach-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.selected-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px;
+  background: #f8f9fa;
+  border-radius: 8px;
+}
+
+.selected-file-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  font-size: 13px;
+}
+
+.selected-file-item .file-name {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-file-item .file-size {
+  color: #888;
+  font-size: 11px;
+}
+
+.remove-file-btn {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.remove-file-btn:hover {
+  color: #c33;
 }

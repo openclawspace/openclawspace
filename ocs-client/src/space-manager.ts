@@ -1,5 +1,5 @@
-import { Database, Space, Member, Message } from './database.js';
-import { OpenClawClient } from './openclaw-client.js';
+import { Database, Space, Member, Message, Attachment } from './database.js';
+import { OpenClawClient, AttachmentRequest } from './openclaw-client.js';
 import { UserProfileManager } from './user-profile.js';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -53,35 +53,69 @@ export class SpaceManager {
    * Create public space directory structure for a space
    */
   private createPublicSpaceStructure(spaceId: string): void {
-    const spaceDir = this.getPublicSpaceDir(spaceId);
+    const spaceRootDir = this.getPublicSpaceDir(spaceId);
 
-    // Create subdirectories for different file types
-    const subdirs = ['documents', 'images', 'code', 'data'];
-    for (const subdir of subdirs) {
-      const subdirPath = path.join(spaceDir, subdir);
-      if (!fs.existsSync(subdirPath)) {
-        fs.mkdirSync(subdirPath, { recursive: true });
+    // 创建 space 目录结构：~/.ocs-client/spaces/{spaceId}/space/
+    const spaceDir = path.join(spaceRootDir, 'space');
+    if (!fs.existsSync(spaceDir)) {
+      fs.mkdirSync(spaceDir, { recursive: true });
+
+      // 创建 workspace 目录（原 shared 目录）
+      const workspaceDir = path.join(spaceDir, 'workspace');
+      fs.mkdirSync(workspaceDir, { recursive: true });
+
+      // 在 workspace 目录中创建子目录
+      const workspaceSubdirs = ['documents', 'images', 'code', 'data'];
+      for (const subdir of workspaceSubdirs) {
+        const subdirPath = path.join(workspaceDir, subdir);
+        if (!fs.existsSync(subdirPath)) {
+          fs.mkdirSync(subdirPath, { recursive: true });
+        }
       }
-    }
 
-    // Create a README file explaining the structure
-    const readmePath = path.join(spaceDir, 'README.md');
-    if (!fs.existsSync(readmePath)) {
-      const readmeContent = `# Space Public Directory
+      // 创建 attachments 目录（新增聊天附件目录）
+      const attachmentsDir = path.join(spaceDir, 'attachments');
+      fs.mkdirSync(attachmentsDir, { recursive: true });
 
-This is the public shared directory for space: ${spaceId}
+      // 在 attachments 目录中创建子目录
+      const attachmentsSubdirs = ['images', 'documents', 'media', 'other', 'temp'];
+      for (const subdir of attachmentsSubdirs) {
+        const subdirPath = path.join(attachmentsDir, subdir);
+        if (!fs.existsSync(subdirPath)) {
+          fs.mkdirSync(subdirPath, { recursive: true });
+        }
+      }
+
+      // Create a README file explaining the structure
+      const readmePath = path.join(spaceDir, 'README.md');
+      const readmeContent = `# Space Directory Structure
+
+This is the space shared directory for space: ${spaceId}
 
 ## Directory Structure
 
-- \`documents/\` - Shared documents (PRD, design docs, meeting notes, etc.)
-- \`images/\` - Shared images and screenshots
-- \`code/\` - Code snippets, scripts, and technical files
-- \`data/\` - Data files, configs, and other resources
+### workspace/ - Team collaboration files (原 shared 目录)
+- \`workspace/documents/\` - Shared documents (PRD, design docs, meeting notes, etc.)
+- \`workspace/images/\` - Shared images and screenshots
+- \`workspace/code/\` - Code snippets, scripts, and technical files
+- \`workspace/data/\` - Data files, configs, and other resources
+
+### attachments/ - Chat attachments (新增)
+- \`attachments/images/\` - Image attachments (screenshots, photos, etc.)
+- \`attachments/documents/\` - Document attachments (PDF, Word, Markdown, etc.)
+- \`attachments/media/\` - Audio and video attachments
+- \`attachments/other/\` - Other file types
+- \`attachments/temp/\` - Temporary upload files (auto-cleaned)
 
 ## Usage
 
 All AI members and the human user can read and write files in this directory.
 When you create a file, other team members can access it immediately.
+
+## Access Paths
+
+- AI members: Use \`./space/workspace/\` and \`./space/attachments/\` paths
+- Human users: Files are stored in the same directory structure
 `;
       fs.writeFileSync(readmePath, readmeContent, 'utf-8');
     }
@@ -134,8 +168,8 @@ When you create a file, other team members can access it immediately.
         // Combine user context with robot's soulMd
         const fullSoulMd = userContext + soulMdWithPath;
 
-        // Create OpenClaw agent
-        const agent = await this.openclaw.createAgent(robot.name, fullSoulMd);
+        // Create OpenClaw agent with spaceId to use public space directory as workspace
+        const agent = await this.openclaw.createAgent(robot.name, fullSoulMd, spaceId);
         createdAgents.push(agent);
 
         // Store member with actual OpenClaw agent ID
@@ -177,15 +211,109 @@ When you create a file, other team members can access it immediately.
   /**
    * Send message to a member (AI agent) and get response
    */
-  async sendMessageToMember(memberId: string, message: string): Promise<string> {
+  async sendMessageToMember(memberId: string, message: string, spaceId?: string): Promise<{ text: string; attachments?: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] }> {
     const member = this.db.getMember(memberId);
     if (!member) {
       throw new Error(`Member not found: ${memberId}`);
     }
 
-    // Call OpenClaw agent
-    const response = await this.openclaw.sendMessage(member.agentId, message);
-    return response;
+    // Call OpenClaw agent with attachment parsing
+    const { text, attachments: attachmentRequests } = await this.openclaw.sendMessageWithAttachments(member.agentId, message);
+
+    // Process attachment requests if any
+    const processedAttachments: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] = [];
+
+    if (attachmentRequests && attachmentRequests.length > 0 && spaceId) {
+      const spaceDir = this.getPublicSpaceDir(spaceId);
+
+      for (const attReq of attachmentRequests) {
+        try {
+          // Resolve the file path
+          const filePath = attReq.path.startsWith('./')
+            ? path.join(spaceDir, attReq.path.slice(2))
+            : path.join(spaceDir, attReq.path);
+
+          // Check if file exists
+          if (!fs.existsSync(filePath)) {
+            console.error(`[SpaceManager] Attachment file not found: ${filePath}`);
+            continue;
+          }
+
+          const stats = fs.statSync(filePath);
+          if (!stats.isFile()) {
+            console.error(`[SpaceManager] Attachment path is not a file: ${filePath}`);
+            continue;
+          }
+
+          // Determine file type and MIME type
+          const ext = path.extname(filePath).toLowerCase();
+          const mimeType = this.getMimeType(ext);
+          const fileType = attReq.type;
+
+          // Generate stored name
+          const storedName = `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}${ext}`;
+
+          // Determine subdirectory based on file type
+          let subdir = 'other';
+          if (fileType === 'image') subdir = 'images';
+          else if (fileType === 'document') subdir = 'documents';
+          else if (fileType === 'media') subdir = 'media';
+
+          // Copy file to attachments directory
+          const attachmentsDir = path.join(spaceDir, 'space', 'attachments', subdir);
+          if (!fs.existsSync(attachmentsDir)) {
+            fs.mkdirSync(attachmentsDir, { recursive: true });
+          }
+
+          const destPath = path.join(attachmentsDir, storedName);
+          fs.copyFileSync(filePath, destPath);
+
+          const relativePath = path.join(spaceId, 'space', 'attachments', subdir, storedName);
+
+          processedAttachments.push({
+            type: fileType,
+            originalName: path.basename(filePath),
+            storedName,
+            relativePath,
+            fileSize: stats.size,
+            mimeType,
+          });
+
+          console.log(`[SpaceManager] Processed attachment: ${filePath} -> ${destPath}`);
+        } catch (error) {
+          console.error(`[SpaceManager] Failed to process attachment:`, error);
+        }
+      }
+    }
+
+    return { text, attachments: processedAttachments.length > 0 ? processedAttachments : undefined };
+  }
+
+  /**
+   * Get MIME type from file extension
+   */
+  private getMimeType(ext: string): string {
+    const mimeTypes: Record<string, string> = {
+      '.txt': 'text/plain',
+      '.md': 'text/markdown',
+      '.json': 'application/json',
+      '.js': 'application/javascript',
+      '.ts': 'application/typescript',
+      '.html': 'text/html',
+      '.css': 'text/css',
+      '.png': 'image/png',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.gif': 'image/gif',
+      '.svg': 'image/svg+xml',
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.mp3': 'audio/mpeg',
+      '.mp4': 'video/mp4',
+      '.zip': 'application/zip',
+    };
+    return mimeTypes[ext] || 'application/octet-stream';
   }
 
   getSpace(spaceId: string): Space | null {
@@ -209,13 +337,63 @@ When you create a file, other team members can access it immediately.
     return this.db.getMember(memberId);
   }
 
-  addMessage(spaceId: string, senderId: string, content: string): Message {
+  addMessage(spaceId: string, senderId: string, content: string, attachments?: (Omit<Attachment, 'id' | 'messageId' | 'createdAt'> & { data?: string })[]): Message {
     const messageId = this.generateId();
-    return this.db.createMessage(messageId, spaceId, senderId, content);
+
+    // Process attachments: save files if data is provided
+    const processedAttachments: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] = [];
+
+    if (attachments && attachments.length > 0) {
+      const spaceDir = this.getPublicSpaceDir(spaceId);
+
+      for (const att of attachments) {
+        let relativePath = att.relativePath;
+
+        // If base64 data is provided, save the file
+        if (att.data) {
+          try {
+            // Determine subdirectory based on file type
+            let subdir = 'other';
+            if (att.type === 'image') subdir = 'images';
+            else if (att.type === 'document') subdir = 'documents';
+            else if (att.type === 'media') subdir = 'media';
+
+            const attachmentsDir = path.join(spaceDir, 'space', 'attachments', subdir);
+            if (!fs.existsSync(attachmentsDir)) {
+              fs.mkdirSync(attachmentsDir, { recursive: true });
+            }
+
+            const filePath = path.join(attachmentsDir, att.storedName);
+            const buffer = Buffer.from(att.data, 'base64');
+            fs.writeFileSync(filePath, buffer);
+            relativePath = path.join(spaceId, 'space', 'attachments', subdir, att.storedName);
+            console.log(`[SpaceManager] Saved attachment: ${filePath}`);
+          } catch (error) {
+            console.error(`[SpaceManager] Failed to save attachment ${att.originalName}:`, error);
+          }
+        }
+
+        processedAttachments.push({
+          type: att.type,
+          originalName: att.originalName,
+          storedName: att.storedName,
+          relativePath,
+          fileSize: att.fileSize,
+          mimeType: att.mimeType,
+          thumbnailPath: att.thumbnailPath,
+        });
+      }
+    }
+
+    return this.db.createMessage(messageId, spaceId, senderId, content, processedAttachments);
   }
 
   getMessages(spaceId: string, limit?: number): Message[] {
     return this.db.getMessagesBySpace(spaceId, limit);
+  }
+
+  getMessagesBeforeId(spaceId: string, beforeId: string, limit?: number): Message[] {
+    return this.db.getMessagesBySpaceBeforeId(spaceId, beforeId, limit);
   }
 
   /**
@@ -263,8 +441,8 @@ When you create a file, other team members can access it immediately.
 
     const memberId = this.generateId();
 
-    // Create OpenClaw agent
-    const agent = await this.openclaw.createAgent(name, soulMd);
+    // Create OpenClaw agent with spaceId to use public space directory as workspace
+    const agent = await this.openclaw.createAgent(name, soulMd, spaceId);
 
     try {
       // Store member with actual OpenClaw agent ID
@@ -298,8 +476,8 @@ When you create a file, other team members can access it immediately.
       // Continue even if delete fails
     }
 
-    // Create new agent with updated info
-    const newAgent = await this.openclaw.createAgent(name, soulMd);
+    // Create new agent with updated info, using the same spaceId
+    const newAgent = await this.openclaw.createAgent(name, soulMd, member.spaceId);
 
     try {
       // Delete old member record
@@ -398,7 +576,7 @@ When you create a file, other team members can access it immediately.
   /**
    * Send message to a member only if space is not paused
    */
-  async sendMessageToMemberIfNotPaused(memberId: string, message: string): Promise<string> {
+  async sendMessageToMemberIfNotPaused(memberId: string, message: string): Promise<{ text: string; attachments?: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] }> {
     const member = this.db.getMember(memberId);
     if (!member) {
       throw new Error(`Member not found: ${memberId}`);
@@ -413,7 +591,7 @@ When you create a file, other team members can access it immediately.
       throw new Error(`Space "${space.name}" is paused. AI will not respond until space is resumed.`);
     }
 
-    return this.sendMessageToMember(memberId, message);
+    return this.sendMessageToMember(memberId, message, member.spaceId);
   }
 
   private generateId(): string {

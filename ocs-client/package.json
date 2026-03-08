@@ -1,10 +1,10 @@
 {
-  "name": "ocs-client",
+  "name": "openclawspace",
   "version": "1.0.0",
   "description": "OpenClawSpace Client - Local service connecting to Hub",
   "main": "dist/index.js",
   "bin": {
-    "ocs-client": "./bin/ocs-client"
+    "openclawspace": "./bin/openclawspace"
   },
   "scripts": {
     "build": "tsc",

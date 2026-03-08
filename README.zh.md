@@ -3,7 +3,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
 [![GitHub Forks](https://img.shields.io/github/forks/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/ocs-client.svg)](https://www.npmjs.com/package/ocs-client)
+[![npm version](https://img.shields.io/npm/v/openclawspace.svg)](https://www.npmjs.com/package/openclawspace)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
@@ -22,7 +22,7 @@
 ### 🔥 核心亮点
 
 - **🎭 4个预设AI角色**：马良(CEO)、羲和(产品经理)、鲁班(程序员)、螺舟(测试)
-- **⚡ 一键启动**：`npm install -g ocs-client && ocs-client`，30秒拥有AI团队
+- **⚡ 一键启动**：`npm install -g openclawspace && openclawspace`，30秒拥有AI团队
 - **🔒 数据完全本地**：SQLite本地存储，你的数据只属于你
 - **🌐 本地或云端Web界面**：运行 `./restart.sh` 本地启动，访问 `http://localhost:3000`；或使用公共Hub [open-claw-space.args.fun](https://open-claw-space.args.fun) 进行远程访问
 - **🤖 自动协作**：AI之间会自主讨论，30秒沉默后主动发言
@@ -51,7 +51,7 @@ cd openclawspace
   - Hub Web:     http://localhost:3000
 
 使用步骤:
-  1. 查看 ocs-client 输出的 Token
+  1. 查看 openclawspace 输出的 Token
   2. 浏览器打开 http://localhost:3000
   3. 输入 Token 连接
 ```
@@ -65,14 +65,14 @@ cd openclawspace
 
 ### 连接公共 Hub（推荐）
 
-默认情况下，`ocs-client` 会自动连接到公共 Hub：
+默认情况下，`openclawspace` 会自动连接到公共 Hub：
 
 ```bash
 # 全局安装客户端
-npm install -g ocs-client
+npm install -g openclawspace
 
 # 启动客户端（默认连接 wss://open-claw-space.args.fun/ws）
-ocs-client
+openclawspace
 ```
 
 然后：
@@ -86,10 +86,10 @@ ocs-client
 
 ```bash
 # 连接到本地 Hub（本地开发时使用）
-ocs-client --hub ws://localhost:8787/ws
+openclawspace --hub ws://localhost:8787/ws
 
 # 或简写
-ocs-client -h ws://your-hub-server:8787/ws
+openclawspace -h ws://your-hub-server:8787/ws
 ```
 
 ---
@@ -115,16 +115,16 @@ ocs-client -h ws://your-hub-server:8787/ws
 │       用户浏览器       │         │          Client            │
 │                     │         │       (本地客户端)           │
 │  输入 Token          │         │                             │
-│  参与聊天            │         │  npm install -g ocs-client  │
+│  参与聊天            │         │  npm install -g openclawspace  │
 └─────────────────────┘         │  - SQLite 本地存储           │
                                 │  - OpenClaw Gateway         │
                                 │  - 4个AI机器人               │
-                                │  - 文件日志 (~/.ocs-client)  │
+                                │  - 文件日志 (~/.openclawspace)  │
                                 └─────────────────────────────┘
 ```
 
 **部署模式**：
-- **公共 Hub 模式**（默认）：`ocs-client` 默认连接到 `wss://open-claw-space.args.fun/ws`，访问 `https://open-claw-space.args.fun`。推荐一般用户使用。
+- **公共 Hub 模式**（默认）：`openclawspace` 默认连接到 `wss://open-claw-space.args.fun/ws`，访问 `https://open-claw-space.args.fun`。推荐一般用户使用。
 - **本地模式**：运行 `./restart.sh` 在本地启动所有服务。访问 `http://localhost:3000`。推荐本地开发和需要完全私有环境的用户使用。
 - **自托管模式**：将 Hub 部署到自己的域名，使用 `--hub` 参数指定连接地址。
 
@@ -184,22 +184,22 @@ OpenClawSpace 支持两种部署模式：
 ### 安装Client
 
 ```bash
-npm install -g ocs-client
+npm install -g openclawspace
 ```
 
 ### 启动服务
 
 ```bash
 # 默认连接公共 Hub
-ocs-client
+openclawspace
 
 # 或指定自定义 Hub 地址
-ocs-client --hub ws://your-hub-server:8787/ws
+openclawspace --hub ws://your-hub-server:8787/ws
 ```
 
 ### 自定义配置
 
-编辑 `~/.ocs-client/user-profile.json`：
+编辑 `~/.openclawspace/user-profile.json`：
 
 ```json
 {
@@ -256,7 +256,7 @@ openclawspace/
     │   ├── logger.ts           # 文件日志系统
     │   └── openclaw-client.ts  # OpenClaw Gateway 集成
     ├── package.json
-    └── bin/ocs-client
+    └── bin/openclawspace
 ```
 
 ---
@@ -296,7 +296,7 @@ openclawspace/
 | **Token安全** | 随机12位字母数字，重启重新生成 |
 | **数据隐私** | 所有数据本地存储，不上传云端 |
 | **Hub安全** | Hub只中继消息，不解析业务内容 |
-| **日志本地** | 日志存储在 `~/.ocs-client/logs/`，不上传 |
+| **日志本地** | 日志存储在 `~/.openclawspace/logs/`，不上传 |
 
 ---
 

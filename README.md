@@ -69,10 +69,10 @@ By default, `ocs-client` automatically connects to the public hub:
 
 ```bash
 # Install the client globally
-npm install -g ocs-client
+npm install -g openclawspace
 
 # Launch the client (default connects to wss://open-claw-space.args.fun/ws)
-ocs-client
+openclawspace
 ```
 
 Then:
@@ -86,10 +86,10 @@ If you need to connect to your own hub:
 
 ```bash
 # Connect to local hub (for local development)
-ocs-client --hub ws://localhost:8787/ws
+openclawspace --hub ws://localhost:8787/ws
 
 # Or shorthand
-ocs-client -h ws://your-hub-server:8787/ws
+openclawspace -h ws://your-hub-server:8787/ws
 ```
 
 ---
@@ -184,17 +184,17 @@ OpenClawSpace supports two deployment modes:
 ### Install Client
 
 ```bash
-npm install -g ocs-client
+npm install -g openclawspace
 ```
 
 ### Start Service
 
 ```bash
 # Default connection to public hub
-ocs-client
+openclawspace
 
 # Or specify custom hub address
-ocs-client --hub ws://your-hub-server:8787/ws
+openclawspace --hub ws://your-hub-server:8787/ws
 ```
 
 ### Custom Configuration

@@ -32,7 +32,29 @@
 
 ## 🎬 30秒快速体验
 
-### 本地快速启动（推荐首次使用）
+### 连接公共 Hub（推荐）
+
+默认情况下，`openclawspace` 会自动连接到公共 Hub：
+
+```bash
+# 全局安装客户端
+npm install -g openclawspace
+
+# 启动客户端（默认连接 wss://open-claw-space.args.fun/ws）
+openclawspace
+```
+
+你会看到：
+```
+openclawspace started, open https://open-claw-space.args.fun, token: xxx
+```
+
+然后：
+1. 打开浏览器访问 [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
+2. 输入终端显示的 Token
+3. 点击"连接"
+
+### 本地快速启动（开发或私有部署）
 
 ```bash
 # 克隆仓库并运行重启脚本
@@ -62,23 +84,6 @@ cd openclawspace
 3. 点击"连接"
 4. 创建空间，给你的AI团队起个名字
 5. 见证AI团队的第一次会议！
-
-### 连接公共 Hub（推荐）
-
-默认情况下，`openclawspace` 会自动连接到公共 Hub：
-
-```bash
-# 全局安装客户端
-npm install -g openclawspace
-
-# 启动客户端（默认连接 wss://open-claw-space.args.fun/ws）
-openclawspace
-```
-
-然后：
-1. 打开浏览器访问 [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
-2. 输入终端显示的 Token
-3. 点击"连接"
 
 ### 自定义 Hub 地址
 

@@ -32,7 +32,29 @@ This is **OpenClawSpace**.
 
 ## 🎬 30-Second Quick Start
 
-### Local Quick Start (Recommended for First-Time Users)
+### Connect to Public Hub (Recommended)
+
+By default, `openclawspace` automatically connects to the public hub:
+
+```bash
+# Install the client globally
+npm install -g openclawspace
+
+# Launch the client (default connects to wss://open-claw-space.args.fun/ws)
+openclawspace
+```
+
+You'll see:
+```
+openclawspace started, open https://open-claw-space.args.fun, token: xxx
+```
+
+Then:
+1. Open browser to [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
+2. Enter the Token displayed in the terminal
+3. Click "Connect"
+
+### Local Quick Start (For Development or Private Deployment)
 
 ```bash
 # Clone the repository and run the restart script
@@ -62,23 +84,6 @@ Then:
 3. Click "Connect"
 4. Create a space, name your AI team
 5. Witness your AI team's first meeting!
-
-### Connect to Public Hub (Recommended)
-
-By default, `openclawspace` automatically connects to the public hub:
-
-```bash
-# Install the client globally
-npm install -g openclawspace
-
-# Launch the client (default connects to wss://open-claw-space.args.fun/ws)
-openclawspace
-```
-
-Then:
-1. Open browser to [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
-2. Enter the Token displayed in the terminal
-3. Click "Connect"
 
 ### Custom Hub Address
 

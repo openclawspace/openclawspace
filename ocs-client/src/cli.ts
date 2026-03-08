@@ -137,8 +137,6 @@ function generateToken(): string {
 }
 
 // Run if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  program.parse();
-}
+program.parse();
 
 export { startClient, generateToken };

@@ -287,7 +287,7 @@ export class Database {
 
   getMessagesBySpace(spaceId: string, limit: number = 100): Message[] {
     const rows = this.db.prepare('SELECT * FROM messages WHERE space_id = ? ORDER BY timestamp DESC LIMIT ?').all(spaceId, limit) as any[];
-    const messages = rows.map(row => ({
+    const messages: Message[] = rows.map(row => ({
       id: row.id,
       spaceId: row.space_id,
       senderId: row.sender_id,
@@ -334,7 +334,7 @@ export class Database {
       'SELECT * FROM messages WHERE space_id = ? AND (timestamp < ? OR (timestamp = ? AND id != ?)) ORDER BY timestamp DESC, id DESC LIMIT ?'
     ).all(spaceId, beforeMessage.timestamp, beforeMessage.timestamp, beforeId, limit) as any[];
 
-    const messages = rows.map(row => ({
+    const messages: Message[] = rows.map(row => ({
       id: row.id,
       spaceId: row.space_id,
       senderId: row.sender_id,

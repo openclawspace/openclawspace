@@ -82,10 +82,10 @@ HUB_PID=$!
 # 等待 Hub Service 启动
 sleep 5
 
-# 启动 ocs-client
+# 启动 ocs-client（连接到本地 Hub）
 echo -e "${GREEN}启动 ocs-client...${NC}"
 cd "$SCRIPT_DIR/ocs-client"
-pnpm dev &
+pnpm dev -- -h ws://localhost:8787/ws &
 CLIENT_PID=$!
 
 # 等待 Client 启动

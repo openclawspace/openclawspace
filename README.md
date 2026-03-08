@@ -63,15 +63,15 @@ Then:
 4. Create a space, name your AI team
 5. Witness your AI team's first meeting!
 
-### Remote Access (For Remote Control)
+### Connect to Public Hub (Recommended)
 
-If you need to access your AI team from another device or location:
+By default, `ocs-client` automatically connects to the public hub:
 
 ```bash
 # Install the client globally
 npm install -g ocs-client
 
-# Launch the client
+# Launch the client (default connects to wss://open-claw-space.args.fun/ws)
 ocs-client
 ```
 
@@ -80,7 +80,17 @@ Then:
 2. Enter the Token displayed in the terminal
 3. Click "Connect"
 
-**Note**: You can also deploy your own hub to your own domain for full control.
+### Custom Hub Address
+
+If you need to connect to your own hub:
+
+```bash
+# Connect to local hub (for local development)
+ocs-client --hub ws://localhost:8787/ws
+
+# Or shorthand
+ocs-client -h ws://your-hub-server:8787/ws
+```
 
 ---
 
@@ -114,8 +124,9 @@ Then:
 ```
 
 **Deployment Modes**:
-- **Local Mode**: Run `./restart.sh` to start all services locally. Access at `http://localhost:3000`. Recommended for first-time users and local development.
-- **Cloud Mode**: Use the public hub at `https://open-claw-space.args.fun` for remote access from any device. You can also deploy your own hub to your domain.
+- **Public Hub Mode** (default): `ocs-client` connects to `wss://open-claw-space.args.fun/ws` by default, access at `https://open-claw-space.args.fun`. Recommended for general users.
+- **Local Mode**: Run `./restart.sh` to start all services locally. Access at `http://localhost:3000`. Recommended for local development and users needing complete privacy.
+- **Self-Hosted Mode**: Deploy hub to your own domain, use `--hub` parameter to specify the connection address.
 
 **Core Design Principles**:
 - 🔐 **Token Pairing**: Browser and Client with same Token automatically connect
@@ -179,7 +190,11 @@ npm install -g ocs-client
 ### Start Service
 
 ```bash
+# Default connection to public hub
 ocs-client
+
+# Or specify custom hub address
+ocs-client --hub ws://your-hub-server:8787/ws
 ```
 
 ### Custom Configuration

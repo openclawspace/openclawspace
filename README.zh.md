@@ -63,15 +63,15 @@ cd openclawspace
 4. 创建空间，给你的AI团队起个名字
 5. 见证AI团队的第一次会议！
 
-### 远程访问（用于远程控制）
+### 连接公共 Hub（推荐）
 
-如果你需要从其他设备或位置访问你的AI团队：
+默认情况下，`ocs-client` 会自动连接到公共 Hub：
 
 ```bash
 # 全局安装客户端
 npm install -g ocs-client
 
-# 启动客户端
+# 启动客户端（默认连接 wss://open-claw-space.args.fun/ws）
 ocs-client
 ```
 
@@ -80,7 +80,17 @@ ocs-client
 2. 输入终端显示的 Token
 3. 点击"连接"
 
-**注意**：你也可以将Hub部署到自己的域名以获得完全控制权。
+### 自定义 Hub 地址
+
+如果你需要连接到自己的 Hub：
+
+```bash
+# 连接到本地 Hub（本地开发时使用）
+ocs-client --hub ws://localhost:8787/ws
+
+# 或简写
+ocs-client -h ws://your-hub-server:8787/ws
+```
 
 ---
 
@@ -114,8 +124,9 @@ ocs-client
 ```
 
 **部署模式**：
-- **本地模式**：运行 `./restart.sh` 在本地启动所有服务。访问 `http://localhost:3000`。推荐首次用户和本地开发使用。
-- **云端模式**：使用公共Hub `https://open-claw-space.args.fun` 从任何设备远程访问。你也可以将Hub部署到自己的域名。
+- **公共 Hub 模式**（默认）：`ocs-client` 默认连接到 `wss://open-claw-space.args.fun/ws`，访问 `https://open-claw-space.args.fun`。推荐一般用户使用。
+- **本地模式**：运行 `./restart.sh` 在本地启动所有服务。访问 `http://localhost:3000`。推荐本地开发和需要完全私有环境的用户使用。
+- **自托管模式**：将 Hub 部署到自己的域名，使用 `--hub` 参数指定连接地址。
 
 **核心设计原则**：
 - 🔐 **Token配对**：相同Token的浏览器和Client自动关联
@@ -179,7 +190,11 @@ npm install -g ocs-client
 ### 启动服务
 
 ```bash
+# 默认连接公共 Hub
 ocs-client
+
+# 或指定自定义 Hub 地址
+ocs-client --hub ws://your-hub-server:8787/ws
 ```
 
 ### 自定义配置

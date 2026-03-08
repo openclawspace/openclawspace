@@ -22,7 +22,7 @@ program
   .command('start', { isDefault: true })
   .description('Start the client and connect to Hub')
   .option('-t, --token <token>', 'Use existing token')
-  .option('-h, --hub <url>', 'Hub WebSocket URL', 'ws://localhost:8787/ws')
+  .option('-h, --hub <url>', 'Hub WebSocket URL', 'wss://open-claw-space.args.fun/ws')
   .option('-d, --data-dir <dir>', 'Data directory')
   .action(async (options) => {
     await startClient(options);
@@ -118,7 +118,8 @@ async function startClient(options: {
   try {
     await hubClient.connect();
     logger.info('✅ 已连接到 Hub');
-    logger.info(`请访问 https://open-claw-space.args.fun 并输入Token`);
+    logger.info(`Hub 地址: ${options.hub}`);
+    logger.info(`Token: ${token}`);
     logger.info('按 Ctrl+C 停止服务');
 
     // Keep running

@@ -1,6 +1,6 @@
 {
   "name": "openclawspace",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "OpenClawSpace Client - Local service connecting to Hub",
   "main": "dist/index.js",
   "bin": {
@@ -31,6 +31,12 @@
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   },
+  "files": [
+    "dist",
+    "bin",
+    "package.json",
+    "README.md"
+  ],
   "engines": {
     "node": ">=18.0.0"
   },

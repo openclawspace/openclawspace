@@ -144,7 +144,7 @@ When you create a file, other team members can access it immediately.
     try {
       // Step 1: Create space first (needed for foreign key constraint)
       this.reportProgress('创建空间数据库...');
-      const space = this.db.createSpace(spaceId, name);
+      const space = await this.db.createSpace(spaceId, name);
 
       // Step 1.5: Create public space directory structure
       this.reportProgress('创建公共空间目录...');
@@ -173,7 +173,7 @@ When you create a file, other team members can access it immediately.
         createdAgents.push(agent);
 
         // Store member with actual OpenClaw agent ID
-        const member = this.db.createMember(memberId, spaceId, robot.name, robot.soulMd, agent.id);
+        const member = await this.db.createMember(memberId, spaceId, robot.name, robot.soulMd, agent.id);
         createdMembers.push(member);
       }
 
@@ -185,14 +185,14 @@ When you create a file, other team members can access it immediately.
       // Delete members from database
       for (const member of createdMembers) {
         try {
-          this.db.deleteMember(member.id);
+          await this.db.deleteMember(member.id);
         } catch {
           // Ignore cleanup errors
         }
       }
       // Delete space if created
       try {
-        this.db.deleteSpace(spaceId);
+        await this.db.deleteSpace(spaceId);
       } catch {
         // Ignore cleanup errors
       }
@@ -337,7 +337,7 @@ When you create a file, other team members can access it immediately.
     return this.db.getMember(memberId);
   }
 
-  addMessage(spaceId: string, senderId: string, content: string, attachments?: (Omit<Attachment, 'id' | 'messageId' | 'createdAt'> & { data?: string })[]): Message {
+  async addMessage(spaceId: string, senderId: string, content: string, attachments?: (Omit<Attachment, 'id' | 'messageId' | 'createdAt'> & { data?: string })[]): Promise<Message> {
     const messageId = this.generateId();
 
     // Process attachments: save files if data is provided
@@ -385,7 +385,7 @@ When you create a file, other team members can access it immediately.
       }
     }
 
-    return this.db.createMessage(messageId, spaceId, senderId, content, processedAttachments);
+    return await this.db.createMessage(messageId, spaceId, senderId, content, processedAttachments);
   }
 
   getMessages(spaceId: string, limit?: number): Message[] {
@@ -414,7 +414,7 @@ When you create a file, other team members can access it immediately.
     }
 
     // Delete space and all related data from database
-    this.db.deleteSpace(spaceId);
+    await this.db.deleteSpace(spaceId);
 
     // Delete public space directory
     try {
@@ -446,7 +446,7 @@ When you create a file, other team members can access it immediately.
 
     try {
       // Store member with actual OpenClaw agent ID
-      const member = this.db.createMember(memberId, spaceId, name, soulMd, agent.id);
+      const member = await this.db.createMember(memberId, spaceId, name, soulMd, agent.id);
       return member;
     } catch (error) {
       // Rollback: delete agent if database operation fails
@@ -481,9 +481,9 @@ When you create a file, other team members can access it immediately.
 
     try {
       // Delete old member record
-      this.db.deleteMember(memberId);
+      await this.db.deleteMember(memberId);
       // Create new member record with same ID but updated info
-      const updatedMember = this.db.createMember(memberId, member.spaceId, name, soulMd, newAgent.id);
+      const updatedMember = await this.db.createMember(memberId, member.spaceId, name, soulMd, newAgent.id);
       return updatedMember;
     } catch (error) {
       // Rollback: delete new agent if database operation fails
@@ -514,13 +514,13 @@ When you create a file, other team members can access it immediately.
     }
 
     // Delete member from database
-    this.db.deleteMember(memberId);
+    await this.db.deleteMember(memberId);
   }
 
   /**
    * Pause a space - stop all AI activity
    */
-  pauseSpace(spaceId: string): boolean {
+  async pauseSpace(spaceId: string): Promise<boolean> {
     const space = this.db.getSpace(spaceId);
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
@@ -531,7 +531,7 @@ When you create a file, other team members can access it immediately.
       return false;
     }
 
-    const success = this.db.pauseSpace(spaceId);
+    const success = await this.db.pauseSpace(spaceId);
     if (success) {
       console.log(`[SpaceManager] Space ${spaceId} paused`);
       // Note: We cannot truly pause running AI tasks, but we can prevent new ones
@@ -543,7 +543,7 @@ When you create a file, other team members can access it immediately.
   /**
    * Resume a space - restart AI activity
    */
-  resumeSpace(spaceId: string): boolean {
+  async resumeSpace(spaceId: string): Promise<boolean> {
     const space = this.db.getSpace(spaceId);
     if (!space) {
       throw new Error(`Space not found: ${spaceId}`);
@@ -554,7 +554,7 @@ When you create a file, other team members can access it immediately.
       return false;
     }
 
-    const success = this.db.resumeSpace(spaceId);
+    const success = await this.db.resumeSpace(spaceId);
     if (success) {
       console.log(`[SpaceManager] Space ${spaceId} resumed`);
       // The AI discussion controller will resume checking for silence

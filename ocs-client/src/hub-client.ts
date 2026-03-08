@@ -179,11 +179,15 @@ export class HubClient {
         break;
 
       case 'pause_space':
-        this.handlePauseSpace(message.payload);
+        this.handlePauseSpace(message.payload).catch(error => {
+          logger.error(`[HubClient] Error pausing space: ${error}`);
+        });
         break;
 
       case 'resume_space':
-        this.handleResumeSpace(message.payload);
+        this.handleResumeSpace(message.payload).catch(error => {
+          logger.error(`[HubClient] Error resuming space: ${error}`);
+        });
         break;
 
       default:
@@ -246,7 +250,7 @@ export class HubClient {
     if (!spaceId || !content) return;
 
     // Store user message with attachments if provided
-    const message = this.spaceManager.addMessage(spaceId, 'user', content, attachments);
+    const message = await this.spaceManager.addMessage(spaceId, 'user', content, attachments);
 
     // Broadcast to browser
     this.send({
@@ -455,7 +459,7 @@ export class HubClient {
     }
   }
 
-  private handlePauseSpace(payload: any): void {
+  private async handlePauseSpace(payload: any): Promise<void> {
     const { spaceId } = payload || {};
     if (!spaceId) {
       this.send({
@@ -466,7 +470,7 @@ export class HubClient {
     }
 
     try {
-      const success = this.spaceManager.pauseSpace(spaceId);
+      const success = await this.spaceManager.pauseSpace(spaceId);
       if (success) {
         const space = this.spaceManager.getSpace(spaceId);
         this.send({
@@ -490,7 +494,7 @@ export class HubClient {
     }
   }
 
-  private handleResumeSpace(payload: any): void {
+  private async handleResumeSpace(payload: any): Promise<void> {
     const { spaceId } = payload || {};
     if (!spaceId) {
       this.send({
@@ -501,7 +505,7 @@ export class HubClient {
     }
 
     try {
-      const success = this.spaceManager.resumeSpace(spaceId);
+      const success = await this.spaceManager.resumeSpace(spaceId);
       if (success) {
         const space = this.spaceManager.getSpace(spaceId);
         this.send({

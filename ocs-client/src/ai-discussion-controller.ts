@@ -301,7 +301,7 @@ ${recentDialogue}
   private async sendMessage(member: Member, content: string, attachments?: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[]): Promise<void> {
     // 这里需要通过回调或事件通知 HubClient 发送消息
     // 暂时通过添加消息到数据库并触发事件
-    this.spaceManager.addMessage(this.spaceId, member.id, content, attachments);
+    await this.spaceManager.addMessage(this.spaceId, member.id, content, attachments);
     this.onActivity();
 
     // 触发消息事件（HubClient 需要监听这个）

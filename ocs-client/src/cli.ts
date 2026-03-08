@@ -84,6 +84,7 @@ async function startClient(options: {
   // Initialize database
   const dbPath = path.join(dataDir, 'data.db');
   const db = new Database(dbPath);
+  await db.init();
   logger.info('✅ 数据库已初始化');
 
   // Initialize space manager with user profile

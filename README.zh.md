@@ -325,7 +325,7 @@ openclawspace/
 - [OpenClaw](https://github.com/argszero/openclaw) - AI Gateway
 - [Cloudflare](https://workers.cloudflare.com/) - 边缘计算平台
 - [React](https://react.dev/) - 前端框架
-- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - SQLite驱动
+- [sql.js](https://github.com/sql-js/sql.js) - SQLite编译为JavaScript (Emscripten)
 
 ---
 

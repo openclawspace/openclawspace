@@ -53,13 +53,9 @@ async function startClient(options: {
   const logDir = path.join(dataDir, 'logs');
   const logger = new Logger(logDir);
   setLogger(logger);
-  logger.info('🐾 OpenClawSpace Client 启动中...');
-
   // Initialize user profile
   const userProfile = new UserProfileManager(dataDir);
   setUserProfileManager(userProfile);
-  const profile = userProfile.getProfile();
-  logger.info(`用户身份: ${profile.name} (${profile.title})`);
 
   // Get or generate token
   const tokenFilePath = path.join(dataDir, TOKEN_FILE);
@@ -78,20 +74,13 @@ async function startClient(options: {
     fs.writeFileSync(tokenFilePath, token, 'utf-8');
   }
 
-  logger.info(`Token: ${token}`);
-  logger.info(`数据目录: ${dataDir}`);
-
   // Initialize database
   const dbPath = path.join(dataDir, 'data.db');
   const db = new Database(dbPath);
   await db.init();
-  logger.info('✅ 数据库已初始化');
 
   // Initialize space manager with user profile
   const spaceManager = new SpaceManager(db, userProfile);
-
-  // Connect to Hub
-  logger.info(`正在连接 Hub (${options.hub})...`);
 
   const hubClient = new HubClient({
     hubUrl: options.hub,
@@ -101,33 +90,30 @@ async function startClient(options: {
 
   // Handle signals
   process.on('SIGINT', () => {
-    console.log('\n\n正在关闭...');
+    console.log('\nShutting down...');
     hubClient.disconnect();
     db.close();
-    logger.close();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     hubClient.disconnect();
     db.close();
-    logger.close();
     process.exit(0);
   });
 
   // Connect and wait
   try {
     await hubClient.connect();
-    logger.info('✅ 已连接到 Hub');
-    logger.info(`Hub 地址: ${options.hub}`);
-    logger.info(`Token: ${token}`);
-    logger.info('按 Ctrl+C 停止服务');
+
+    // Print concise startup message
+    const webUrl = options.hub.replace('wss://', 'https://').replace('/ws', '');
+    console.log(`\nopenclawspace started, open ${webUrl}, token: ${token}\n`);
 
     // Keep running
     await new Promise(() => {});
   } catch (err) {
-    logger.error(`❌ 连接 Hub 失败: ${err}`);
-    logger.close();
+    console.error(`Failed to connect: ${err}`);
     process.exit(1);
   }
 }

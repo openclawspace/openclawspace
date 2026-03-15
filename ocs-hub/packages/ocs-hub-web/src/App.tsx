@@ -236,7 +236,8 @@ function TokenPage({
   space,
   setSpace,
   setCreationProgress,
-  setTeamTemplates
+  setTeamTemplates,
+  setToolStatuses
 }: {
   setToken: (t: string) => void
   inputToken: string
@@ -253,6 +254,7 @@ function TokenPage({
   setSpace: (s: Space | null | ((prev: Space | null) => Space | null)) => void
   setCreationProgress: (p: string) => void
   setTeamTemplates: (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void
+  setToolStatuses: (t: Record<string, ToolStatus[]> | ((prev: Record<string, ToolStatus[]>) => Record<string, ToolStatus[]>)) => void
 }) {
   const { t } = useTranslation('common');
   const navigate = useNavigate()
@@ -448,7 +450,7 @@ function TokenPage({
         setError(message.payload?.error || t('errors.unknownError'))
         break
     }
-  }, [navigate, setConnectionStatus, setError, setMembers, setMessages, setSpace, setSpaces, space])
+  }, [navigate, setConnectionStatus, setError, setMembers, setMessages, setSpace, setSpaces, setToolStatuses, space])
 
   const connect = useCallback((tokenToUse?: string) => {
     console.log('[Connect] tokenToUse type:', typeof tokenToUse, 'value:', tokenToUse)
@@ -2000,6 +2002,7 @@ function App() {
     messages, setMessages,
     creationProgress, setCreationProgress,
     teamTemplates, setTeamTemplates,
+    toolStatuses, setToolStatuses,
     wsRef,
     disconnect
   } = useGlobalState()
@@ -2027,6 +2030,7 @@ function App() {
               setSpace={setSpace}
               setCreationProgress={setCreationProgress}
               setTeamTemplates={setTeamTemplates}
+              setToolStatuses={setToolStatuses}
             />
           }
         />
@@ -2061,6 +2065,7 @@ function App() {
                 wsRef={wsRef}
                 connectionStatus={connectionStatus}
                 disconnect={disconnect}
+                toolStatuses={toolStatuses}
               />
             </ConnectionGuard>
           }

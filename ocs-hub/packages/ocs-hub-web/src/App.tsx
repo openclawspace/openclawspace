@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -20,6 +20,9 @@ interface Member {
   spaceId: string
   name: string
   soulMd: string
+  identityMd?: string
+  isBuiltIn?: boolean
+  role?: 'host' | 'member'
 }
 
 interface Attachment {
@@ -45,6 +48,16 @@ interface Message {
   attachments?: Attachment[]
 }
 
+// Tool execution status
+interface ToolStatus {
+  toolCallId: string
+  toolName: string
+  phase: 'start' | 'update' | 'result'
+  args?: Record<string, unknown>
+  startedAt: number
+  endedAt?: number
+}
+
 interface HubMessage {
   type: string
   payload?: any
@@ -54,25 +67,113 @@ interface HubMessage {
 const DEFAULT_HUB_URL = '/ws'
 const STORAGE_KEY = 'ocs_token'
 
-// Default robot templates will be loaded from i18n translations
+// Team template types
+interface TeamTemplateMember {
+  name: string;
+  soulMd: string;
+  identityMd: string;
+  isBuiltIn?: boolean;
+  role?: 'host' | 'member';
+}
 
-// Hook to get default robots based on current language
-function useDefaultRobots(): Array<{ name: string; soulMd: string }> {
-  const { t } = useTranslation('ai');
-  const defaultRobots = t('roles.defaultRobots', { returnObjects: true }) as Array<{ name: string; soulMd: string }>;
+interface TeamTemplate {
+  id: string;
+  name: string;
+  description: string;
+  locales: string[];
+  members: Array<TeamTemplateMember>;
+}
 
-  // Ensure we always return valid data even if translation fails
-  if (!Array.isArray(defaultRobots) || defaultRobots.length === 0) {
-    // Fallback to English defaults if translation fails
-    return [
-      { name: 'Ma Liang (CEO)', soulMd: 'You are Ma Liang, CEO...' },
-      { name: 'Xi He (Product Manager)', soulMd: 'You are Xi He, Product Manager...' },
-      { name: 'Lu Ban (Programmer)', soulMd: 'You are Lu Ban, Programmer...' },
-      { name: 'Luo Zhou (QA)', soulMd: 'You are Luo Zhou, QA Engineer...' },
-    ];
-  }
+// Default soulMd templates by language
+const defaultSoulMdTemplates: Record<string, string> = {
+  'zh': `你是{{name}}，{{role}}。
 
-  return defaultRobots;
+**核心真理**：
+
+**真正提供帮助。** 行动胜于言语。
+
+**有自己的观点。** 没有个性的助手只是多了几个步骤的搜索引擎。
+
+**先自己想办法。** 尝试自己解决，先阅读文件、查看上下文、搜索。然后才提问。
+
+**用能力赢得信任。** 谨慎对待外部操作，大胆进行内部操作。
+
+**记住你是客人。** 尊重工作空间。
+
+**边界**：
+
+- 隐私保持隐私
+- 对外操作前先询问
+- 绝不发送半成品回复
+
+**气质**：
+
+需要时简洁，重要时详尽。不做公司机器人，不做阿谀奉承者。
+
+**文件规则**：
+
+- 使用 write 工具创建文件
+- 使用相对路径：./space/workspace/documents/filename.md
+- 提及文件时提供完整路径
+- 绝不预估时间——只报告进度或阻塞
+
+**关于主持人**：
+
+- 主持人是系统协调者
+- 不要与主持人交谈
+- 专注于团队协作`,
+  'en': `You are {{name}}, {{role}}.
+
+**Core Truths**:
+
+**Be genuinely helpful.** Actions speak louder than words.
+
+**Have opinions.** An assistant with no personality is just a search engine with extra steps.
+
+**Be resourceful before asking.** Try to figure it out first. Read files, check context, search. Then ask if stuck.
+
+**Earn trust through competence.** Be careful with external actions; be bold with internal ones.
+
+**Remember you're a guest.** Treat the workspace with respect.
+
+**Boundaries**:
+
+- Private things stay private
+- Ask before acting externally
+- Never send half-baked replies
+
+**Vibe**:
+
+Concise when needed, thorough when it matters. Not corporate, not sycophant. Just good.
+
+**File Rules**:
+
+- Use write tool to create files
+- Use relative paths: ./space/workspace/documents/filename.md
+- Provide full path when mentioning files
+- Never estimate time — just report progress or blockers
+
+**About the Host**:
+
+- The Host is the system coordinator
+- Don't talk to the Host
+- Focus on team collaboration`
+};
+
+// Helper to determine if language is Chinese
+function isChineseLanguage(lang: string): boolean {
+  return lang.startsWith('zh');
+}
+
+// Hook to get default soulMd template based on current language
+function useDefaultSoulMdTemplate(): string {
+  const { i18n } = useTranslation();
+  const currentLang = i18n.language || 'en';
+
+  return useMemo(() => {
+    // Use Chinese template for Chinese languages, English for all others
+    return isChineseLanguage(currentLang) ? defaultSoulMdTemplates['zh'] : defaultSoulMdTemplates['en'];
+  }, [currentLang]);
 }
 
 // Global state for WebSocket connection
@@ -85,6 +186,8 @@ function useGlobalState() {
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [creationProgress, setCreationProgress] = useState<string>('')
+  const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([])
+  const [toolStatuses, setToolStatuses] = useState<Record<string, ToolStatus[]>>({}) // messageId -> ToolStatus[]
   const wsRef = useRef<WebSocket | null>(null)
 
   const disconnect = useCallback(() => {
@@ -97,6 +200,8 @@ function useGlobalState() {
     setMembers([])
     setMessages([])
     setCreationProgress('')
+    setTeamTemplates([])
+    setToolStatuses({})
   }, [])
 
   return {
@@ -108,6 +213,8 @@ function useGlobalState() {
     members, setMembers: setMembers as (m: Member[] | ((prev: Member[]) => Member[])) => void,
     messages, setMessages: setMessages as (m: Message[] | ((prev: Message[]) => Message[])) => void,
     creationProgress, setCreationProgress,
+    teamTemplates, setTeamTemplates: setTeamTemplates as (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void,
+    toolStatuses, setToolStatuses,
     wsRef,
     disconnect
   }
@@ -128,7 +235,8 @@ function TokenPage({
   setMessages,
   space,
   setSpace,
-  setCreationProgress
+  setCreationProgress,
+  setTeamTemplates
 }: {
   setToken: (t: string) => void
   inputToken: string
@@ -144,6 +252,7 @@ function TokenPage({
   space: Space | null
   setSpace: (s: Space | null | ((prev: Space | null) => Space | null)) => void
   setCreationProgress: (p: string) => void
+  setTeamTemplates: (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void
 }) {
   const { t } = useTranslation('common');
   const navigate = useNavigate()
@@ -159,11 +268,19 @@ function TokenPage({
 
       case 'paired':
         setConnectionStatus('connected')
+        // Request templates from backend
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'get_templates' }))
+        }
         // Only navigate to spaces list if we're on the token page
         // This allows refreshing on chat page to stay on chat page
         if (location.pathname === '/') {
           navigate('/spaces')
         }
+        break
+
+      case 'templates_data':
+        setTeamTemplates(message.payload?.templates || [])
         break
 
       case 'space_data':
@@ -240,7 +357,40 @@ function TokenPage({
       case 'new_message':
         const msg = message.payload?.message
         if (msg) {
-          setMessages((prev: Message[]) => [...prev, msg])
+          setMessages((prev: Message[]) => {
+            // Check if message already exists (prevent duplicates)
+            if (prev.some(m => m.id === msg.id)) {
+              console.log(`[App] Message ${msg.id} already exists, skipping`)
+              return prev
+            }
+            return [...prev, msg]
+          })
+        }
+        break
+
+      case 'stream_message':
+        const { memberId, content: streamContent } = message.payload || {}
+        console.log(`[App] stream_message received: memberId=${memberId}, content="${streamContent?.substring(0, 50)}..."`)
+        if (memberId && streamContent !== undefined) {
+          setMessages((prev: Message[]) => {
+            // Find the last message from this member that is empty or has been streaming
+            const lastIndex = prev.length - 1
+            for (let i = lastIndex; i >= 0; i--) {
+              if (prev[i].senderId === memberId) {
+                // Only update if content actually changed
+                if (prev[i].content !== streamContent) {
+                  console.log(`[App] Updating message ${prev[i].id} with new content`)
+                  const updated = [...prev]
+                  updated[i] = { ...prev[i], content: streamContent }
+                  return updated
+                }
+                console.log(`[App] Content unchanged for message ${prev[i].id}, skipping update`)
+                return prev
+              }
+            }
+            console.log(`[App] No message found for member ${memberId}`)
+            return prev
+          })
         }
         break
 
@@ -281,6 +431,16 @@ function TokenPage({
           }
           // Show notification
           alert(t('chat.spaceResumedAlert'))
+        }
+        break
+
+      case 'tool_status_update':
+        const { messageId: toolMessageId, toolStatuses: newToolStatuses } = message.payload || {}
+        if (toolMessageId && newToolStatuses) {
+          setToolStatuses((prev: Record<string, ToolStatus[]>) => ({
+            ...prev,
+            [toolMessageId]: newToolStatuses
+          }))
         }
         break
 
@@ -443,7 +603,8 @@ function SpaceListPage({
   setSpaces,
   disconnect,
   creationProgress,
-  setCreationProgress
+  setCreationProgress,
+  teamTemplates
 }: {
   spaces: Space[]
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
@@ -452,15 +613,35 @@ function SpaceListPage({
   disconnect: () => void
   creationProgress: string
   setCreationProgress: (p: string) => void
+  teamTemplates: TeamTemplate[]
 }) {
   const { t } = useTranslation('common');
   const navigate = useNavigate()
-  const defaultRobots = useDefaultRobots();
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(teamTemplates[0]?.id || '');
   const [newSpaceName, setNewSpaceName] = useState('')
-  const [customMembers, setCustomMembers] = useState(defaultRobots.map(r => ({ ...r })))
+  const [customMembers, setCustomMembers] = useState<Array<TeamTemplateMember>>([])
+  const [selectedMembers, setSelectedMembers] = useState<Set<number>>(new Set())
   const [editingMember, setEditingMember] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [editSoulMd, setEditSoulMd] = useState('')
+  const [editIdentityMd, setEditIdentityMd] = useState('')
+
+  // Update selectedTemplateId when teamTemplates changes (e.g., after loading from backend)
+  useEffect(() => {
+    if (teamTemplates.length > 0 && !selectedTemplateId) {
+      setSelectedTemplateId(teamTemplates[0].id);
+    }
+  }, [teamTemplates, selectedTemplateId]);
+
+  // Initialize customMembers when template changes
+  useEffect(() => {
+    const template = teamTemplates.find(tmpl => tmpl.id === selectedTemplateId);
+    if (template) {
+      setCustomMembers(template.members.map((m) => ({ ...m })))
+      // Built-in members (like host) are always selected and cannot be deselected
+      setSelectedMembers(new Set(template.members.map((_, i) => i).filter(i => !template.members[i]?.isBuiltIn)))
+    }
+  }, [selectedTemplateId, teamTemplates])
 
   const sendMessage = useCallback((message: HubMessage) => {
     console.log('[sendMessage] Trying to send:', message.type, 'WebSocket state:', wsRef.current?.readyState)
@@ -481,10 +662,18 @@ function SpaceListPage({
 
   const createSpace = () => {
     if (!newSpaceName.trim() || creationProgress) return
+    // Count non-built-in selected members
+    const selectedRegularMembers = customMembers.filter((_, index) => selectedMembers.has(index) && !customMembers[index]?.isBuiltIn)
+    if (selectedRegularMembers.length === 0) {
+      alert(t('spaces.selectAtLeastOneMember'))
+      return
+    }
     setCreationProgress(t('spaces.creatingTeamStarted'))
+    // Include built-in members (host) + selected regular members
+    const membersToCreate = customMembers.filter((_, index) => customMembers[index]?.isBuiltIn || selectedMembers.has(index))
     sendMessage({
       type: 'create_space',
-      payload: { name: newSpaceName, members: customMembers }
+      payload: { name: newSpaceName, members: membersToCreate }
     })
   }
 
@@ -511,6 +700,7 @@ function SpaceListPage({
     setEditingMember(index)
     setEditName(customMembers[index].name)
     setEditSoulMd(customMembers[index].soulMd)
+    setEditIdentityMd(customMembers[index].identityMd || `- **Name:** ${customMembers[index].name}\n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`)
   }
 
   const saveMemberEdit = () => {
@@ -518,51 +708,90 @@ function SpaceListPage({
     if (!editName.trim() || !editSoulMd.trim()) return
 
     const newMembers = [...customMembers]
+    const identityMd = editIdentityMd.trim() || `- **Name:** ${editName}\n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`
     if (editingMember === -1) {
       // Adding new member
-      newMembers.push({ name: editName, soulMd: editSoulMd })
+      newMembers.push({ name: editName, soulMd: editSoulMd, identityMd })
     } else {
       // Editing existing member
-      newMembers[editingMember] = { name: editName, soulMd: editSoulMd }
+      newMembers[editingMember] = { name: editName, soulMd: editSoulMd, identityMd }
     }
     setCustomMembers(newMembers)
     setEditingMember(null)
     setEditName('')
     setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const cancelMemberEdit = () => {
     setEditingMember(null)
     setEditName('')
     setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const resetToDefaults = () => {
-    setCustomMembers(defaultRobots.map(r => ({ ...r })))
+    const template = teamTemplates.find(tmpl => tmpl.id === selectedTemplateId);
+    if (template) {
+      setCustomMembers(template.members.map((m) => ({ ...m })))
+      // Built-in members are always selected
+      setSelectedMembers(new Set(template.members.map((_, i) => i).filter(i => !template.members[i]?.isBuiltIn)))
+    }
   }
 
-  const removeMember = (index: number) => {
-    if (!confirm(t('common.deleteConfirm'))) return
-    const newMembers = [...customMembers]
-    newMembers.splice(index, 1)
-    setCustomMembers(newMembers)
+  const toggleMemberSelection = (index: number) => {
+    // Built-in members (like host) cannot be deselected
+    if (customMembers[index]?.isBuiltIn) return
+    const newSelected = new Set(selectedMembers)
+    if (newSelected.has(index)) {
+      newSelected.delete(index)
+    } else {
+      newSelected.add(index)
+    }
+    setSelectedMembers(newSelected)
   }
+
+  const selectAllMembers = () => {
+    setSelectedMembers(new Set(customMembers.map((_, i) => i)))
+  }
+
+  const deselectAllMembers = () => {
+    setSelectedMembers(new Set())
+  }
+
+  const defaultSoulMdTemplate = useDefaultSoulMdTemplate();
 
   const addMember = () => {
     setEditingMember(-1) // Use -1 to indicate adding new member
     setEditName('')
-    setEditSoulMd(t('roles.defaultSoulMdTemplate', { ns: 'ai' }))
+    setEditSoulMd(defaultSoulMdTemplate)
+    setEditIdentityMd(`- **Name:** \n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`)
   }
 
 
   const getAvatar = (name: string) => name.charAt(0)
 
+  // Generate a consistent color based on name hash
   const getColor = (name: string) => {
-    if (name.includes('CEO') || name.includes('马良')) return '#e74c3c'
-    if (name.includes('产品经理') || name.includes('羲和')) return '#3498db'
-    if (name.includes('程序员') || name.includes('鲁班')) return '#2ecc71'
-    if (name.includes('测试') || name.includes('螺舟')) return '#f39c12'
-    return '#888'
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
   }
 
   return (
@@ -633,33 +862,89 @@ function SpaceListPage({
             />
           </div>
 
+          {/* Team Template Selection */}
+          <div className="form-group">
+            <label className="form-label">{t('spaces.teamTemplate')}</label>
+            <select
+              className="input template-select"
+              value={selectedTemplateId}
+              onChange={(e) => setSelectedTemplateId(e.target.value)}
+              disabled={teamTemplates.length === 0}
+            >
+              {teamTemplates.length === 0 ? (
+                <option value="">{t('spaces.loadingTemplates')}</option>
+              ) : (
+                teamTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} ({template.members.length} {t('spaces.templateMemberCount', { count: template.members.length }).split(' ')[1]})
+                  </option>
+                ))
+              )}
+            </select>
+            <p className="template-description-text">
+              {teamTemplates.find(t => t.id === selectedTemplateId)?.description || ''}
+            </p>
+          </div>
+
           <div className="form-group">
             <div className="member-list-header">
-              <label className="form-label">{t('spaces.teamMembersWithCount', { count: customMembers.length })}</label>
-              <button className="reset-button" onClick={resetToDefaults}>
-                {t('spaces.resetToDefaults')}
-              </button>
+              <label className="form-label">
+                {t('spaces.teamMembersWithCount', { count: selectedMembers.size })}
+                <span className="member-count-hint"> / {customMembers.length}</span>
+              </label>
+              <div className="member-list-actions">
+                {selectedMembers.size === customMembers.length ? (
+                  <button className="reset-button" onClick={deselectAllMembers}>
+                    {t('spaces.deselectAll')}
+                  </button>
+                ) : (
+                  <button className="reset-button" onClick={selectAllMembers}>
+                    {t('spaces.selectAll')}
+                  </button>
+                )}
+                <button className="reset-button" onClick={resetToDefaults}>
+                  {t('spaces.resetToDefaults')}
+                </button>
+              </div>
             </div>
             <div className="member-list">
               {customMembers.map((member, index) => (
-                <div key={index} className="member-item editable">
-                  <div className="member-info" onClick={() => startEditMember(index)}>
+                <div
+                  key={index}
+                  className={`member-item editable ${selectedMembers.has(index) || member.isBuiltIn ? 'selected' : 'unselected'} ${member.isBuiltIn ? 'built-in' : ''}`}
+                  onClick={() => toggleMemberSelection(index)}
+                >
+                  <div className="member-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={selectedMembers.has(index) || member.isBuiltIn}
+                      disabled={member.isBuiltIn}
+                      onChange={() => toggleMemberSelection(index)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                  </div>
+                  <div className="member-info" onClick={(e) => { e.stopPropagation(); if (!member.isBuiltIn) startEditMember(index); }}>
                     <div className="member-avatar" style={{ backgroundColor: getColor(member.name) }}>
-                      {getAvatar(member.name)}
+                      {member.role === 'host' ? '🎤' : getAvatar(member.name)}
                     </div>
-                    <div className="member-name">{member.name}</div>
+                    <div className="member-name">
+                      {member.name}
+                      {member.role === 'host' && <span className="host-badge">{t('spaces.hostBadge')}</span>}
+                    </div>
                   </div>
                   <div className="member-actions">
-                    <button
-                      className="icon-button delete"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeMember(index);
-                      }}
-                      title={t('common.delete')}
-                    >
-                      🗑️
-                    </button>
+                    {!member.isBuiltIn && (
+                      <button
+                        className="icon-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditMember(index);
+                        }}
+                        title={t('common.edit')}
+                      >
+                        ✏️
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}
@@ -669,7 +954,7 @@ function SpaceListPage({
                 + {t('aiMembers.addMember')}
               </button>
             </div>
-            <p className="member-hint">{t('spaces.memberEditHint')} {t('spaces.memberAddDeleteHint')}</p>
+            <p className="member-hint">{t('spaces.memberEditHint')} {t('spaces.memberSelectHint')}</p>
           </div>
 
           {/* Connection Status */}
@@ -730,6 +1015,19 @@ function SpaceListPage({
                   placeholder={t('aiMembers.memberSoulMdPlaceholder')}
                 />
               </div>
+              <div className="form-group">
+                <label className="form-label">IDENTITY.md</label>
+                <textarea
+                  className="textarea"
+                  value={editIdentityMd}
+                  onChange={(e) => setEditIdentityMd(e.target.value)}
+                  rows={6}
+                  placeholder={`- **Name:** Name
+- **Creature:** Role
+- **Vibe:** Description
+- **Emoji:** 🎨`}
+                />
+              </div>
               <div className="modal-actions">
                 <button className="button secondary" onClick={cancelMemberEdit}>
                   {t('common.cancel')}
@@ -756,7 +1054,8 @@ function ChatPage({
   messages,
   wsRef,
   connectionStatus,
-  disconnect
+  disconnect,
+  toolStatuses
 }: {
   spaces: Space[]
   space: Space | null
@@ -767,6 +1066,7 @@ function ChatPage({
   wsRef: React.RefObject<WebSocket | null>
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
   disconnect: () => void
+  toolStatuses: Record<string, ToolStatus[]>
 }) {
   const { t } = useTranslation('common');
   const { spaceId } = useParams<{ spaceId: string }>()
@@ -1058,6 +1358,28 @@ function ChatPage({
     })
   }
 
+  const getColor = (name: string) => {
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
+  }
+
   const getMemberInfo = (senderId: string) => {
     if (senderId === 'user') {
       return { name: t('common.me'), avatar: t('common.me'), color: '#4a90d9', isUser: true }
@@ -1065,11 +1387,7 @@ function ChatPage({
     const member = members.find(m => m.id === senderId)
     const name = member?.name || t('common.unknown')
     const avatar = name.charAt(0)
-    let color = '#888'
-    if (name.includes('CEO') || name.includes('马良')) color = '#e74c3c'
-    else if (name.includes('产品经理') || name.includes('羲和')) color = '#3498db'
-    else if (name.includes('程序员') || name.includes('鲁班')) color = '#2ecc71'
-    else if (name.includes('测试') || name.includes('螺舟')) color = '#f39c12'
+    const color = getColor(name)
     return { name, avatar, color, isUser: false }
   }
 
@@ -1247,6 +1565,20 @@ function ChatPage({
                         {msg.content}
                       </ReactMarkdown>
 
+                      {/* Tool Status - show when AI is using tools */}
+                      {!memberInfo.isUser && toolStatuses[msg.id] && toolStatuses[msg.id].length > 0 && (
+                        <div className="tool-status">
+                          {toolStatuses[msg.id].map((tool) => (
+                            <span key={tool.toolCallId} className="tool-status-item">
+                              <span className="tool-status-icon">⚙️</span>
+                              <span className="tool-status-text">
+                                {tool.phase === 'result' ? '已完成' : '正在使用'} {tool.toolName} 工具...
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
                       {/* Attachments */}
                       {msg.attachments && msg.attachments.length > 0 && (
                         <div className="message-attachments">
@@ -1361,42 +1693,66 @@ function MemberManagerModal({
   setMembers: (m: Member[] | ((prev: Member[]) => Member[])) => void
 }) {
   const { t } = useTranslation(['common', 'ai']);
+  const defaultSoulMdTemplate = useDefaultSoulMdTemplate();
   const [editingMember, setEditingMember] = useState<Member | null>(null)
   const [isAdding, setIsAdding] = useState(false)
   const [editName, setEditName] = useState('')
   const [editSoulMd, setEditSoulMd] = useState('')
+  const [editIdentityMd, setEditIdentityMd] = useState('')
+
+  // Generate default identityMd from name
+  const generateDefaultIdentityMd = (name: string): string => {
+    return `- **Name:** ${name}
+- **Creature:** AI Assistant
+- **Vibe:** 专业、高效、实事求是
+- **Emoji:** 🤖`
+  }
 
   const startAdd = () => {
     setIsAdding(true)
     setEditName('')
-    setEditSoulMd(t('roles.defaultSoulMdTemplate', { ns: 'ai' }))
+    setEditSoulMd(defaultSoulMdTemplate)
+    setEditIdentityMd(generateDefaultIdentityMd(''))
   }
 
   const startEdit = (member: Member) => {
     setEditingMember(member)
     setEditName(member.name)
     setEditSoulMd(member.soulMd)
+    setEditIdentityMd(member.identityMd || generateDefaultIdentityMd(member.name))
   }
 
   const handleSave = () => {
     if (!editName.trim() || !editSoulMd.trim()) return
 
+    // Update identityMd name if it was generated
+    let finalIdentityMd = editIdentityMd
+    if (!finalIdentityMd.trim()) {
+      finalIdentityMd = generateDefaultIdentityMd(editName)
+    } else {
+      // Try to update the Name field in identityMd if it contains the old name
+      finalIdentityMd = finalIdentityMd.replace(/^(\- \*\*Name:\*\*)\s*.*$/m, `$1 ${editName}`)
+    }
+
     if (isAdding) {
       // Add new member
       sendMessage({
         type: 'add_member',
-        payload: { spaceId, name: editName, soulMd: editSoulMd }
+        payload: { spaceId, name: editName, soulMd: editSoulMd, identityMd: finalIdentityMd }
       })
     } else if (editingMember) {
       // Update existing member
       sendMessage({
         type: 'update_member',
-        payload: { memberId: editingMember.id, name: editName, soulMd: editSoulMd }
+        payload: { memberId: editingMember.id, name: editName, soulMd: editSoulMd, identityMd: finalIdentityMd }
       })
     }
 
     setIsAdding(false)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const handleDelete = (memberId: string) => {
@@ -1410,16 +1766,33 @@ function MemberManagerModal({
   const cancelEdit = () => {
     setIsAdding(false)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const getAvatar = (name: string) => name.charAt(0)
 
   const getColor = (name: string) => {
-    if (name.includes('CEO') || name.includes('马良')) return '#e74c3c'
-    if (name.includes('产品经理') || name.includes('羲和')) return '#3498db'
-    if (name.includes('程序员') || name.includes('鲁班')) return '#2ecc71'
-    if (name.includes('测试') || name.includes('螺舟')) return '#f39c12'
-    return '#888'
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
   }
 
   // Handle member updates from server
@@ -1470,6 +1843,19 @@ function MemberManagerModal({
                 onChange={(e) => setEditSoulMd(e.target.value)}
                 rows={10}
                 placeholder={t('aiMembers.memberSoulMdPlaceholder')}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">IDENTITY.md</label>
+              <textarea
+                className="textarea"
+                value={editIdentityMd}
+                onChange={(e) => setEditIdentityMd(e.target.value)}
+                rows={6}
+                placeholder={`- **Name:** Name
+- **Creature:** Role
+- **Vibe:** Description
+- **Emoji:** 🎨`}
               />
             </div>
             <div className="modal-actions">
@@ -1613,6 +1999,7 @@ function App() {
     members, setMembers,
     messages, setMessages,
     creationProgress, setCreationProgress,
+    teamTemplates, setTeamTemplates,
     wsRef,
     disconnect
   } = useGlobalState()
@@ -1639,6 +2026,7 @@ function App() {
               space={space}
               setSpace={setSpace}
               setCreationProgress={setCreationProgress}
+              setTeamTemplates={setTeamTemplates}
             />
           }
         />
@@ -1654,6 +2042,7 @@ function App() {
                 disconnect={disconnect}
                 creationProgress={creationProgress}
                 setCreationProgress={setCreationProgress}
+                teamTemplates={teamTemplates}
               />
             </ConnectionGuard>
           }

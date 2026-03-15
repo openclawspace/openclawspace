@@ -4,21 +4,7 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 
 // Import translation files
 import enCommon from './locales/en/common.json';
-import enAi from './locales/en/ai.json';
 import zhCommon from './locales/zh/common.json';
-import zhAi from './locales/zh/ai.json';
-
-// Type definition for our translation resources
-// interface Resources {
-//   en: {
-//     common: typeof enCommon;
-//     ai: typeof enAi;
-//   };
-//   zh: {
-//     common: typeof zhCommon;
-//     ai: typeof zhAi;
-//   };
-// }
 
 // Configure i18n
 i18n
@@ -28,11 +14,9 @@ i18n
     resources: {
       en: {
         common: enCommon,
-        ai: enAi,
       },
       zh: {
         common: zhCommon,
-        ai: zhAi,
       },
     },
     fallbackLng: 'en',

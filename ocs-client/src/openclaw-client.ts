@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import { promisify } from 'util';
 import { exec } from 'child_process';
 import fs from 'fs';
@@ -11,16 +10,6 @@ export interface OpenClawAgent {
   id: string;
   name: string;
   workspace: string;
-}
-
-export interface AgentResponse {
-  text: string;
-  done: boolean;
-}
-
-export interface AttachmentRequest {
-  path: string;
-  type: 'image' | 'document' | 'media' | 'file';
 }
 
 /**
@@ -50,20 +39,71 @@ export class OpenClawClient {
   }
 
   /**
+   * 设置 OpenClaw 配置，确保 skipBootstrap 为 true
+   */
+  private async ensureSkipBootstrapConfig(): Promise<void> {
+    try {
+      const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+      let config: any = {};
+
+      // 读取现有配置
+      if (fs.existsSync(configPath)) {
+        const content = fs.readFileSync(configPath, 'utf-8');
+        try {
+          config = JSON.parse(content);
+        } catch (e) {
+          console.error('[OpenClaw] Failed to parse config:', e);
+          config = {};
+        }
+      }
+
+      // 确保 agents.defaults.skipBootstrap 为 true
+      if (!config.agents) {
+        config.agents = {};
+      }
+      if (!config.agents.defaults) {
+        config.agents.defaults = {};
+      }
+
+      // 只有在未设置时才设置为 true
+      if (config.agents.defaults.skipBootstrap !== true) {
+        config.agents.defaults.skipBootstrap = true;
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
+        console.log('[OpenClaw] Set agents.defaults.skipBootstrap = true');
+      }
+    } catch (error) {
+      console.error('[OpenClaw] Failed to update config:', error);
+      // 继续执行，不因为配置更新失败而中断
+    }
+  }
+
+  /**
    * 创建 Agent
    */
-  async createAgent(name: string, soulMd: string, spaceId?: string): Promise<OpenClawAgent> {
+  async createAgent(name: string, soulMd: string, identityMd: string, spaceId?: string): Promise<OpenClawAgent> {
+    // 首先确保 skipBootstrap 配置
+    await this.ensureSkipBootstrapConfig();
+
     const agentId = this.normalizeAgentId(name);
 
     let workspaceDir: string;
+    let agentDir: string;
+    let agentBaseDir: string;
 
     if (spaceId) {
-      // 使用新的目录结构：~/.ocs-client/spaces/{spaceId}/agents/{agentId}/
-      workspaceDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+      // 使用统一的目录结构：~/.ocs-client/spaces/{spaceId}/agents/{agentId}/
+      // workspace/: 存储 SOUL.md, BOOTSTRAP.md 等业务文件
+      // agent/: 存储 OpenClaw 内部状态 (session, models.json 等)
+      agentBaseDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+      workspaceDir = path.join(agentBaseDir, 'workspace');
+      agentDir = path.join(agentBaseDir, 'agent');
 
-      // 确保agent workspace目录存在
+      // 确保目录存在
       if (!fs.existsSync(workspaceDir)) {
         fs.mkdirSync(workspaceDir, { recursive: true });
+      }
+      if (!fs.existsSync(agentDir)) {
+        fs.mkdirSync(agentDir, { recursive: true });
       }
 
       // 创建空间目录结构：~/.ocs-client/spaces/{spaceId}/space/
@@ -71,20 +111,20 @@ export class OpenClawClient {
       if (!fs.existsSync(spaceDir)) {
         fs.mkdirSync(spaceDir, { recursive: true });
 
-        // 创建 workspace 目录（原 shared 目录）
-        const workspaceDir = path.join(spaceDir, 'workspace');
-        fs.mkdirSync(workspaceDir, { recursive: true });
+        // 创建共享 workspace 目录
+        const sharedWorkspaceDir = path.join(spaceDir, 'workspace');
+        fs.mkdirSync(sharedWorkspaceDir, { recursive: true });
 
-        // 在 workspace 目录中创建子目录
+        // 在共享 workspace 目录中创建子目录
         const workspaceSubdirs = ['documents', 'images', 'code', 'data'];
         for (const subdir of workspaceSubdirs) {
-          const subdirPath = path.join(workspaceDir, subdir);
+          const subdirPath = path.join(sharedWorkspaceDir, subdir);
           if (!fs.existsSync(subdirPath)) {
             fs.mkdirSync(subdirPath, { recursive: true });
           }
         }
 
-        // 创建 attachments 目录（新增聊天附件目录）
+        // 创建 attachments 目录（聊天附件目录）
         const attachmentsDir = path.join(spaceDir, 'attachments');
         fs.mkdirSync(attachmentsDir, { recursive: true });
 
@@ -98,39 +138,82 @@ export class OpenClawClient {
         }
       }
 
-      // 在agent workspace中创建space目录的symlink，指向空间共享目录
+      // 在 agent workspace 中创建 space 目录的 symlink，指向空间共享目录
       const spaceLinkPath = path.join(workspaceDir, 'space');
-      const spaceTargetPath = path.join('..', '..', 'space'); // 指向 ../../space/
+      const spaceTargetPath = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'space');
       try {
         // 如果已存在，先删除
         if (fs.existsSync(spaceLinkPath)) {
           fs.unlinkSync(spaceLinkPath);
         }
-        // 创建symlink
+        // 创建 symlink (使用绝对路径避免 cwd 问题)
         fs.symlinkSync(spaceTargetPath, spaceLinkPath, 'dir');
         console.log(`[OpenClaw] Created symlink: ${spaceLinkPath} -> ${spaceTargetPath}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         console.error(`[OpenClaw] Failed to create symlink: ${errorMessage}`);
-        // 继续执行，不因为symlink失败而中断
+        // 继续执行，不因为 symlink 失败而中断
       }
     } else {
-      // 如果没有spaceId，使用默认的OpenClaw workspace目录
-      workspaceDir = path.join(this.baseDir, 'workspaces', agentId);
+      // 如果没有 spaceId，使用默认目录结构
+      agentBaseDir = path.join(this.baseDir, 'agents', agentId);
+      workspaceDir = path.join(agentBaseDir, 'workspace');
+      agentDir = path.join(agentBaseDir, 'agent');
 
-      // 确保工作目录存在
+      // 确保目录存在
       if (!fs.existsSync(workspaceDir)) {
         fs.mkdirSync(workspaceDir, { recursive: true });
+      }
+      if (!fs.existsSync(agentDir)) {
+        fs.mkdirSync(agentDir, { recursive: true });
       }
     }
 
     // 创建 agent（使用非交互模式）- 使用120秒超时，因为初始化可能需要较长时间
-    const createCmd = `openclaw agents add ${agentId} --workspace ${workspaceDir} --non-interactive`;
+    // 同时指定 workspace 和 agentDir，确保两者都在预期位置
+    const createCmd = `openclaw agents add ${agentId} --workspace ${workspaceDir} --agent-dir ${agentDir} --non-interactive`;
     await this.execCommand(createCmd, 120000);
 
     // 直接写入 SOUL.md 到工作目录
     const soulPath = path.join(workspaceDir, 'SOUL.md');
     fs.writeFileSync(soulPath, soulMd, 'utf-8');
+
+    // 写入 IDENTITY.md，提供身份元数据
+    const identityPath = path.join(workspaceDir, 'IDENTITY.md');
+    fs.writeFileSync(identityPath, identityMd, 'utf-8');
+
+    // 写入自定义 BOOTSTRAP.md，告诉 Agent 直接从 SOUL.md 读取身份信息
+    // 而不是询问"我是谁"
+    const bootstrapPath = path.join(workspaceDir, 'BOOTSTRAP.md');
+    const customBootstrap = `# Agent Identity Bootstrap
+
+你已经配置完成，可以直接开始工作。
+
+**重要**: 请直接阅读 SOUL.md 文件了解你的身份、职责和行为准则。
+
+- 你的名字和角色在 SOUL.md 中有详细定义
+- 遵循 SOUL.md 中的行为准则和工作流程
+- 不需要询问"我是谁"，直接根据 SOUL.md 的设定开始工作
+
+---
+*此文件由 OpenClawSpace 自动生成*
+`;
+    fs.writeFileSync(bootstrapPath, customBootstrap, 'utf-8');
+
+    // 创建 workspace-state.json，标记 onboarding 已完成
+    // 这是必需的，否则 OpenClaw 会认为这是一个全新工作区，从模板加载默认 BOOTSTRAP.md
+    const openclawDir = path.join(workspaceDir, '.openclaw');
+    if (!fs.existsSync(openclawDir)) {
+      fs.mkdirSync(openclawDir, { recursive: true });
+    }
+    const statePath = path.join(openclawDir, 'workspace-state.json');
+    const now = new Date().toISOString();
+    const workspaceState = {
+      version: 1,
+      bootstrapSeededAt: now,
+      onboardingCompletedAt: now
+    };
+    fs.writeFileSync(statePath, JSON.stringify(workspaceState, null, 2), 'utf-8');
 
     // 获取 agent 信息
     const listCmd = `openclaw agents list --json`;
@@ -146,164 +229,60 @@ export class OpenClawClient {
   }
 
   /**
+   * 提取 OpenClaw 实际使用的目录名（agentId 的时间戳-随机数部分）
+   * 例如：主持人-mmlzvsxr-3r2gjs -> mmlzvsxr-3r2gjs
+   */
+  private extractOpenClawDirName(agentId: string): string | null {
+    // OpenClaw 目录名格式：{timestamp}-{random}，长度为 8-15 字符左右
+    const match = agentId.match(/[a-z0-9]{5,8}-[a-z0-9]{5,8}$/);
+    return match ? match[0] : null;
+  }
+
+  /**
    * 删除 Agent
    */
-  async deleteAgent(agentId: string): Promise<void> {
+  async deleteAgent(agentId: string, spaceId?: string): Promise<void> {
+    // 先删除 OpenClaw agent 配置
     const cmd = `openclaw agents delete ${agentId} --force`;
     await this.execCommand(cmd);
-  }
 
-  /**
-   * 发送消息给 Agent 并获取回复
-   */
-  async sendMessage(agentId: string, message: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      // 使用新的命令格式: openclaw agent --agent <id> --message <text>
-      const args = ['agent', '--agent', agentId, '--message', message];
-
-      if (this.gatewayToken) {
-        args.push('--token', this.gatewayToken);
-      }
-
-      const child = spawn('openclaw', args, {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      let output = '';
-      let errorOutput = '';
-
-      // 设置 120 秒超时（给 OpenClaw 足够时间处理）
-      const timeout = setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error(`openclaw agent timeout after 120s: ${agentId}`));
-      }, 120000);
-
-      child.stdout.on('data', (data) => {
-        output += data.toString();
-      });
-
-      child.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      child.on('close', (code) => {
-        clearTimeout(timeout);
-        if (code !== 0) {
-          reject(new Error(`openclaw agent failed: ${errorOutput || output}`));
-          return;
+    // 删除 OpenClaw 自动创建的目录（使用截断后的目录名）
+    const openClawDirName = this.extractOpenClawDirName(agentId);
+    if (openClawDirName) {
+      const openclawAgentDir = path.join(os.homedir(), '.openclaw', 'agents', openClawDirName);
+      console.log(`[OpenClaw] Checking agent directory: ${openclawAgentDir}`);
+      if (fs.existsSync(openclawAgentDir)) {
+        try {
+          fs.rmSync(openclawAgentDir, { recursive: true, force: true });
+          console.log(`[OpenClaw] Deleted agent directory: ${openclawAgentDir}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          console.error(`[OpenClaw] Failed to delete agent directory: ${errorMessage}`);
         }
-
-        // 提取回复内容（去掉思考过程等）
-        const response = this.extractResponse(output);
-        resolve(response);
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-    });
-  }
-
-  /**
-   * 发送消息给 Agent 并获取回复，同时解析附件请求
-   */
-  async sendMessageWithAttachments(agentId: string, message: string): Promise<{ text: string; attachments?: AttachmentRequest[] }> {
-    const response = await this.sendMessage(agentId, message);
-
-    // 解析 send_attachment 工具调用
-    const attachments = this.parseAttachmentRequests(response);
-
-    // 移除工具调用标记，保留自然语言回复
-    const cleanText = this.removeToolCalls(response);
-
-    return { text: cleanText, attachments };
-  }
-
-  /**
-   * 解析附件请求
-   * 检测 AI 回复中提到的文件路径，自动处理为附件
-   */
-  private parseAttachmentRequests(response: string): AttachmentRequest[] | undefined {
-    const attachments: AttachmentRequest[] = [];
-
-    // 从回复中提取文件路径（支持 ./space/workspace/ 开头的路径）
-    // 匹配格式：./space/workspace/.../文件名.扩展名
-    const pathRegex = /\.\/space\/workspace\/[^\s"'\n]+/g;
-    const matches = response.match(pathRegex);
-
-    if (matches) {
-      for (const filePath of matches) {
-        // 根据文件扩展名判断类型
-        const ext = filePath.toLowerCase().split('.').pop() || '';
-        let type: 'image' | 'document' | 'media' | 'file' = 'file';
-
-        if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'bmp', 'webp'].includes(ext)) {
-          type = 'image';
-        } else if (['md', 'txt', 'json', 'js', 'ts', 'html', 'css', 'pdf', 'doc', 'docx'].includes(ext)) {
-          type = 'document';
-        } else if (['mp3', 'mp4', 'wav', 'avi', 'mov'].includes(ext)) {
-          type = 'media';
-        }
-
-        attachments.push({ path: filePath, type });
+      } else {
+        console.log(`[OpenClaw] Agent directory not found: ${openclawAgentDir}`);
       }
     }
 
-    return attachments.length > 0 ? attachments : undefined;
-  }
-
-  /**
-   * 清理回复文本，保持自然语言
-   */
-  private removeToolCalls(response: string): string {
-    // 这里不需要移除任何内容，因为 AI 只是自然语言描述
-    // 保持回复原样
-    return response.trim();
-  }
-
-  /**
-   * 运行 Agent 并实时获取输出
-   */
-  async runAgentStream(
-    agentId: string,
-    message: string,
-    onChunk: (chunk: string) => void
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const args = ['agent', '--agent', agentId, '--message', message];
-
-      if (this.gatewayToken) {
-        args.push('--token', this.gatewayToken);
+    // 删除 ocs-client 创建的目录（使用完整 agentId）
+    let agentDirToDelete: string;
+    if (spaceId) {
+      agentDirToDelete = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+    } else {
+      agentDirToDelete = path.join(this.baseDir, 'agents', agentId);
+    }
+    console.log(`[OpenClaw] Checking ocs-client agent directory: ${agentDirToDelete}`);
+    if (fs.existsSync(agentDirToDelete)) {
+      try {
+        fs.rmSync(agentDirToDelete, { recursive: true, force: true });
+        console.log(`[OpenClaw] Deleted ocs-client agent directory: ${agentDirToDelete}`);
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.error(`[OpenClaw] Failed to delete ocs-client agent directory: ${errorMessage}`);
       }
-
-      const child = spawn('openclaw', args, {
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-
-      let errorOutput = '';
-
-      child.stdout.on('data', (data) => {
-        const chunk = data.toString();
-        onChunk(chunk);
-      });
-
-      child.stderr.on('data', (data) => {
-        errorOutput += data.toString();
-      });
-
-      child.on('close', (code) => {
-        if (code !== 0) {
-          reject(new Error(`openclaw agent failed: ${errorOutput}`));
-          return;
-        }
-        resolve();
-      });
-
-      child.on('error', (err) => {
-        reject(err);
-      });
-    });
+    } else {
+      console.log(`[OpenClaw] ocs-client agent directory not found: ${agentDirToDelete}`);
+    }
   }
 
   /**
@@ -354,33 +333,5 @@ export class OpenClawClient {
       .replace(/^-|-$/g, '')
       .substring(0, 10) || 'agent';
     return `${prefix}-${timestamp}-${random}`;
-  }
-
-  /**
-   * 提取回复内容
-   */
-  private extractResponse(output: string): string {
-    // 去掉 ANSI 颜色码
-    const cleanOutput = output.replace(/\x1b\[[0-9;]*m/g, '');
-
-    // 过滤掉 OpenClaw 内部日志行
-    const lines = cleanOutput
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => {
-        if (!line) return false;
-        // 过滤 OpenClaw 内部日志
-        if (line.startsWith('[') && line.includes(']')) {
-          // 形如 [agents/auth-profiles], [INFO], [DEBUG] 等
-          if (line.match(/^\[[\w\-/]+\]\s/)) return false;
-        }
-        // 过滤其他已知日志前缀
-        if (line.startsWith('🎯') || line.startsWith('🚀') || line.startsWith('✅')) {
-          return false;
-        }
-        return true;
-      });
-
-    return lines.join('\n').trim();
   }
 }

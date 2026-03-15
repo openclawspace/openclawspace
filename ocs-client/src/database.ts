@@ -15,7 +15,10 @@ export interface Member {
   spaceId: string;
   name: string;
   soulMd: string;
+  identityMd?: string;
   agentId: string;
+  isBuiltIn?: boolean;
+  role?: 'host' | 'member';
 }
 
 export interface Attachment {
@@ -81,7 +84,7 @@ export class Database {
     // Migrate existing tables if needed
     await this.migrateTables();
 
-    // Members table with cascade delete
+    // Members table with cascade delete and host support
     this.db.run(`
       CREATE TABLE IF NOT EXISTS members (
         id TEXT PRIMARY KEY,
@@ -89,6 +92,9 @@ export class Database {
         name TEXT NOT NULL,
         soul_md TEXT NOT NULL,
         agent_id TEXT NOT NULL,
+        is_built_in INTEGER NOT NULL DEFAULT 0,
+        role TEXT NOT NULL DEFAULT 'member',
+        identity_md TEXT,
         FOREIGN KEY (space_id) REFERENCES spaces(id) ON DELETE CASCADE
       )
     `);
@@ -151,14 +157,18 @@ export class Database {
 
   getSpace(id: string): Space | null {
     const stmt = this.db.prepare('SELECT * FROM spaces WHERE id = ?');
-    const row = stmt.get([id]);
+    stmt.bind([id]);
+    if (!stmt.step()) {
+      stmt.free();
+      return null;
+    }
+    const row = stmt.getAsObject();
     stmt.free();
-    if (!row) return null;
     return {
       id: row.id,
       name: row.name,
       createdAt: row.created_at,
-      isPaused: row.is_paused === 1,
+      isPaused: Number(row.is_paused) === 1,
       pausedAt: row.paused_at || undefined
     };
   }
@@ -172,7 +182,7 @@ export class Database {
         id: row.id,
         name: row.name,
         createdAt: row.created_at,
-        isPaused: row.is_paused === 1,
+        isPaused: Number(row.is_paused) === 1,
         pausedAt: row.paused_at || undefined
       });
     }
@@ -244,11 +254,22 @@ export class Database {
   }
 
   // Member operations
-  async createMember(id: string, spaceId: string, name: string, soulMd: string, agentId: string): Promise<Member> {
-    this.db.run('INSERT INTO members (id, space_id, name, soul_md, agent_id) VALUES (?, ?, ?, ?, ?)',
-      [id, spaceId, name, soulMd, agentId]);
+  async createMember(
+    id: string,
+    spaceId: string,
+    name: string,
+    soulMd: string,
+    agentId: string,
+    isBuiltIn: boolean = false,
+    role: 'host' | 'member' = 'member',
+    identityMd?: string
+  ): Promise<Member> {
+    this.db.run(
+      'INSERT INTO members (id, space_id, name, soul_md, agent_id, is_built_in, role, identity_md) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, spaceId, name, soulMd, agentId, isBuiltIn ? 1 : 0, role, identityMd || '']
+    );
     await this.save();
-    return { id, spaceId, name, soulMd, agentId };
+    return { id, spaceId, name, soulMd, agentId, isBuiltIn, role, identityMd };
   }
 
   getMembersBySpace(spaceId: string): Member[] {
@@ -262,7 +283,10 @@ export class Database {
         spaceId: row.space_id,
         name: row.name,
         soulMd: row.soul_md,
-        agentId: row.agent_id
+        identityMd: row.identity_md,
+        agentId: row.agent_id,
+        isBuiltIn: row.is_built_in === 1,
+        role: row.role as 'host' | 'member'
       });
     }
     stmt.free();
@@ -283,7 +307,10 @@ export class Database {
       spaceId: row.space_id,
       name: row.name,
       soulMd: row.soul_md,
-      agentId: row.agent_id
+      identityMd: row.identity_md,
+      agentId: row.agent_id,
+      isBuiltIn: row.is_built_in === 1,
+      role: row.role as 'host' | 'member'
     };
   }
 
@@ -328,8 +355,21 @@ export class Database {
     return { id, spaceId, senderId, content, timestamp, attachments: savedAttachments.length > 0 ? savedAttachments : undefined };
   }
 
+  async updateMessageContent(messageId: string, content: string): Promise<void> {
+    this.db.run('UPDATE messages SET content = ? WHERE id = ?', [content, messageId]);
+    await this.save();
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    // Delete attachments first
+    this.db.run('DELETE FROM attachments WHERE message_id = ?', [messageId]);
+    // Delete message
+    this.db.run('DELETE FROM messages WHERE id = ?', [messageId]);
+    await this.save();
+  }
+
   private generateId(): string {
-    return `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`;
+    return `${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 11)}`;
   }
 
   getMessagesBySpace(spaceId: string, limit: number = 100): Message[] {
@@ -461,6 +501,41 @@ export class Database {
         `);
         this.db.run(`CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id)`);
         console.log('[Database] Attachments table migration completed successfully');
+        await this.save();
+      }
+
+      // Check if members table has is_built_in and role columns
+      const membersStmt = this.db.prepare("PRAGMA table_info(members)");
+      const memberColumns: any[] = [];
+      while (membersStmt.step()) {
+        memberColumns.push(membersStmt.getAsObject());
+      }
+      membersStmt.free();
+
+      const hasIsBuiltIn = memberColumns.some(col => col.name === 'is_built_in');
+      const hasRole = memberColumns.some(col => col.name === 'role');
+
+      if (!hasIsBuiltIn) {
+        console.log('[Database] Migrating members table to add is_built_in column...');
+        this.db.run('ALTER TABLE members ADD COLUMN is_built_in INTEGER NOT NULL DEFAULT 0');
+        console.log('[Database] is_built_in column added successfully');
+        await this.save();
+      }
+
+      if (!hasRole) {
+        console.log('[Database] Migrating members table to add role column...');
+        this.db.run("ALTER TABLE members ADD COLUMN role TEXT NOT NULL DEFAULT 'member'");
+        console.log('[Database] role column added successfully');
+        await this.save();
+      }
+
+      // Check if members table has identity_md column
+      const hasIdentityMd = memberColumns.some(col => col.name === 'identity_md');
+
+      if (!hasIdentityMd) {
+        console.log('[Database] Migrating members table to add identity_md column...');
+        this.db.run('ALTER TABLE members ADD COLUMN identity_md TEXT');
+        console.log('[Database] identity_md column added successfully');
         await this.save();
       }
     } catch (error) {

@@ -34,14 +34,20 @@
     "teamMembers": "团队成员",
     "resetToDefaults": "重置为默认",
     "memberEditHint": "💡 点击成员可编辑名称和人格定义",
-    "memberAddDeleteHint": "🗑️ 点击删除按钮可移除成员，点击下方按钮可添加新成员",
+    "memberSelectHint": "☑️ 勾选复选框选择要加入团队的成员",
+    "selectAll": "全选",
+    "deselectAll": "取消全选",
+    "selectAtLeastOneMember": "请至少选择一个成员",
     "createTeam": "创建团队",
     "creatingTeam": "创建中...",
     "creatingTeamStarted": "开始创建团队...",
     "connectionStatusConnecting": "⏳ 正在连接...",
     "connectionStatusError": "❌ 连接失败，请刷新页面重试",
     "connectionStatusIdle": "⏸️ 未连接",
-    "teamMembersWithCount": "团队成员（{{count}}人）"
+    "teamMembersWithCount": "团队成员（{{count}}人）",
+    "teamTemplate": "团队模板",
+    "templateMemberCount": "{{count}} 位成员",
+    "hostBadge": "主持人"
   },
   "chat": {
     "title": "聊天",

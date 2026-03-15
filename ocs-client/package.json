@@ -1,6 +1,6 @@
 {
   "name": "openclawspace",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "OpenClawSpace Client - Local service connecting to Hub",
   "main": "dist/index.js",
   "bin": {

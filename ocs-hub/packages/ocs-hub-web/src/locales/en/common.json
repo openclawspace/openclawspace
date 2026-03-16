@@ -34,6 +34,10 @@
     "teamMembers": "Team Members",
     "resetToDefaults": "Reset to Defaults",
     "memberEditHint": "💡 Click members to edit name and personality definition",
+    "memberSelectHint": "☑️ Check the box to select members to include in the team",
+    "selectAll": "Select All",
+    "deselectAll": "Deselect All",
+    "selectAtLeastOneMember": "Please select at least one member",
     "createTeam": "Create Team",
     "creatingTeam": "Creating Team...",
     "creatingTeamStarted": "Starting team creation...",
@@ -41,7 +45,10 @@
     "connectionStatusError": "❌ Connection failed, please refresh page to retry",
     "connectionStatusIdle": "⏸️ Not connected",
     "teamMembersWithCount": "Team Members ({{count}})",
-    "deleteSpaceTooltip": "Delete Space"
+    "teamTemplate": "Team Template",
+    "templateMemberCount": "{{count}} members",
+    "deleteSpaceTooltip": "Delete Space",
+    "hostBadge": "Host"
   },
   "chat": {
     "title": "Chat",
@@ -64,7 +71,11 @@
     "resumeButton": "▶️ Resume",
     "pauseButton": "⏸️ Pause",
     "resumeTooltip": "Resume space",
-    "pauseTooltip": "Pause space"
+    "pauseTooltip": "Pause space",
+    "loadingOlderMessages": "Loading older messages...",
+    "attachButton": "Attach file",
+    "sending": "Sending...",
+    "downloadAttachment": "Download attachment"
   },
   "aiMembers": {
     "edit": "Edit",
@@ -85,7 +96,8 @@
     "tokenRequired": "Token is required",
     "invalidToken": "Invalid token format",
     "connectionFailed": "Connection failed",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "uploadFailed": "Upload failed, please try again"
   },
   "common": {
     "loading": "Loading...",

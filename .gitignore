@@ -64,3 +64,9 @@ tmp/
 *.pid
 *.seed
 *.pid.lock
+
+/openclaw
+/.ocs-client
+/.openclaw
+OPENCLAW_ARCHITECTURE_SKILL.md
+OPENCLAW_QUICK_REFERENCE.md

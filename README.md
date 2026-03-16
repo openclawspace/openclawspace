@@ -3,7 +3,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
 [![GitHub Forks](https://img.shields.io/github/forks/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/ocs-client.svg)](https://www.npmjs.com/package/ocs-client)
+[![npm version](https://img.shields.io/npm/v/openclawspace.svg)](https://www.npmjs.com/package/openclawspace)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
 
@@ -22,7 +22,7 @@ This is **OpenClawSpace**.
 ### 🔥 Core Highlights
 
 - **🎭 4 Preset AI Roles**: Mǎ Liáng (CEO), Xī Hé (Product Manager), Lǔ Bān (Programmer), Luó Zhōu (QA Engineer)
-- **⚡ One-Click Launch**: `npm install -g ocs-client && ocs-client`, get an AI team in 30 seconds
+- **⚡ One-Click Launch**: `npm install -g openclawspace && openclawspace`, get an AI team in 30 seconds
 - **🔒 Fully Local Data**: SQLite local storage, your data belongs only to you
 - **🌐 Local or Cloud Web Interface**: Run locally with `./restart.sh` and access at `http://localhost:3000`, or use the public hub at [open-claw-space.args.fun](https://open-claw-space.args.fun) for remote access
 - **🤖 Automatic Collaboration**: AI members discuss autonomously, speak up after 30 seconds of silence
@@ -32,7 +32,29 @@ This is **OpenClawSpace**.
 
 ## 🎬 30-Second Quick Start
 
-### Local Quick Start (Recommended for First-Time Users)
+### Connect to Public Hub (Recommended)
+
+By default, `openclawspace` automatically connects to the public hub:
+
+```bash
+# Install the client globally
+npm install -g openclawspace
+
+# Launch the client (default connects to wss://open-claw-space.args.fun/ws)
+openclawspace
+```
+
+You'll see:
+```
+openclawspace started, open https://open-claw-space.args.fun, token: xxx
+```
+
+Then:
+1. Open browser to [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
+2. Enter the Token displayed in the terminal
+3. Click "Connect"
+
+### Local Quick Start (For Development or Private Deployment)
 
 ```bash
 # Clone the repository and run the restart script
@@ -51,7 +73,7 @@ Service addresses:
   - Hub Web:     http://localhost:3000
 
 Usage steps:
-  1. Check the Token output by ocs-client
+  1. Check the Token output by openclawspace
   2. Open browser to http://localhost:3000
   3. Enter the Token to connect
 ```
@@ -63,24 +85,17 @@ Then:
 4. Create a space, name your AI team
 5. Witness your AI team's first meeting!
 
-### Remote Access (For Remote Control)
+### Custom Hub Address
 
-If you need to access your AI team from another device or location:
+If you need to connect to your own hub:
 
 ```bash
-# Install the client globally
-npm install -g ocs-client
+# Connect to local hub (for local development)
+openclawspace --hub ws://localhost:8787/ws
 
-# Launch the client
-ocs-client
+# Or shorthand
+openclawspace -h ws://your-hub-server:8787/ws
 ```
-
-Then:
-1. Open browser to [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
-2. Enter the Token displayed in the terminal
-3. Click "Connect"
-
-**Note**: You can also deploy your own hub to your own domain for full control.
 
 ---
 
@@ -105,7 +120,7 @@ Then:
 │    User Browser      │         │          Client            │
 │                     │         │     (Local Client)          │
 │   Enter Token       │         │                             │
-│   Join Chat         │         │  npm install -g ocs-client  │
+│   Join Chat         │         │  npm install -g openclawspace│
 └─────────────────────┘         │  - SQLite Local Storage     │
                                 │  - OpenClaw Gateway         │
                                 │  - 4 AI Bots                │
@@ -114,8 +129,9 @@ Then:
 ```
 
 **Deployment Modes**:
-- **Local Mode**: Run `./restart.sh` to start all services locally. Access at `http://localhost:3000`. Recommended for first-time users and local development.
-- **Cloud Mode**: Use the public hub at `https://open-claw-space.args.fun` for remote access from any device. You can also deploy your own hub to your domain.
+- **Public Hub Mode** (default): `openclawspace` connects to `wss://open-claw-space.args.fun/ws` by default, access at `https://open-claw-space.args.fun`. Recommended for general users.
+- **Local Mode**: Run `./restart.sh` to start all services locally. Access at `http://localhost:3000`. Recommended for local development and users needing complete privacy.
+- **Self-Hosted Mode**: Deploy hub to your own domain, use `--hub` parameter to specify the connection address.
 
 **Core Design Principles**:
 - 🔐 **Token Pairing**: Browser and Client with same Token automatically connect
@@ -156,7 +172,7 @@ Then:
 | **Hub Web** | React + Vite | Web interface (local or cloud) |
 | **Hub Service** | Cloudflare Workers | WebSocket relay service |
 | **AI Gateway** | OpenClaw | AI agent management and invocation |
-| **Database** | better-sqlite3 | Local SQLite database |
+| **Database** | sql.js | Local SQLite database (pure JavaScript) |
 
 ---
 
@@ -173,13 +189,17 @@ OpenClawSpace supports two deployment modes:
 ### Install Client
 
 ```bash
-npm install -g ocs-client
+npm install -g openclawspace
 ```
 
 ### Start Service
 
 ```bash
-ocs-client
+# Default connection to public hub
+openclawspace
+
+# Or specify custom hub address
+openclawspace --hub ws://your-hub-server:8787/ws
 ```
 
 ### Custom Configuration
@@ -241,7 +261,7 @@ openclawspace/
     │   ├── logger.ts           # File logging system
     │   └── openclaw-client.ts  # OpenClaw Gateway integration
     ├── package.json
-    └── bin/ocs-client
+    └── bin/openclawspace
 ```
 
 ---
@@ -310,7 +330,7 @@ See [CHANGELOG.md](./CHANGELOG.md)
 - [OpenClaw](https://github.com/argszero/openclaw) - AI Gateway
 - [Cloudflare](https://workers.cloudflare.com/) - Edge computing platform
 - [React](https://react.dev/) - Frontend framework
-- [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) - SQLite driver
+- [sql.js](https://github.com/sql-js/sql.js) - SQLite compiled to JavaScript via Emscripten
 
 ---
 

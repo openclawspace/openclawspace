@@ -22,7 +22,7 @@ program
   .command('start', { isDefault: true })
   .description('Start the client and connect to Hub')
   .option('-t, --token <token>', 'Use existing token')
-  .option('-h, --hub <url>', 'Hub WebSocket URL', 'ws://localhost:8787/ws')
+  .option('--hub <url>', 'Hub WebSocket URL', 'wss://open-claw-space.args.fun/ws')
   .option('-d, --data-dir <dir>', 'Data directory')
   .action(async (options) => {
     await startClient(options);
@@ -53,13 +53,24 @@ async function startClient(options: {
   const logDir = path.join(dataDir, 'logs');
   const logger = new Logger(logDir);
   setLogger(logger);
-  logger.info('🐾 OpenClawSpace Client 启动中...');
-
   // Initialize user profile
   const userProfile = new UserProfileManager(dataDir);
   setUserProfileManager(userProfile);
-  const profile = userProfile.getProfile();
-  logger.info(`用户身份: ${profile.name} (${profile.title})`);
+
+  // Load OpenClaw Gateway token from config
+  const openclawConfigPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
+  let gatewayToken: string | undefined;
+  try {
+    if (fs.existsSync(openclawConfigPath)) {
+      const openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, 'utf-8'));
+      gatewayToken = openclawConfig?.gateway?.auth?.token;
+      if (gatewayToken) {
+        logger.info('[CLI] Loaded Gateway token from OpenClaw config');
+      }
+    }
+  } catch (err) {
+    logger.warn(`[CLI] Failed to load OpenClaw config: ${err}`);
+  }
 
   // Get or generate token
   const tokenFilePath = path.join(dataDir, TOKEN_FILE);
@@ -78,19 +89,28 @@ async function startClient(options: {
     fs.writeFileSync(tokenFilePath, token, 'utf-8');
   }
 
-  logger.info(`Token: ${token}`);
-  logger.info(`数据目录: ${dataDir}`);
-
   // Initialize database
   const dbPath = path.join(dataDir, 'data.db');
   const db = new Database(dbPath);
-  logger.info('✅ 数据库已初始化');
+  await db.init();
 
-  // Initialize space manager with user profile
-  const spaceManager = new SpaceManager(db, userProfile);
+  // Initialize space manager with user profile and gateway token
+  const spaceManager = new SpaceManager(db, userProfile, gatewayToken);
 
-  // Connect to Hub
-  logger.info(`正在连接 Hub (${options.hub})...`);
+  // Initialize Gateway connection
+  try {
+    const gatewayConnected = await spaceManager.initializeGateway();
+    if (gatewayConnected) {
+      logger.info('[CLI] OpenClaw Gateway connected');
+    } else {
+      logger.warn('[CLI] OpenClaw Gateway not available, retrying...');
+      // 继续重试连接，不降级到 CLI
+    }
+  } catch (err) {
+    logger.error(`[CLI] Failed to initialize Gateway: ${err}`);
+    logger.info('[CLI] Please ensure OpenClaw Gateway is running: openclaw gateway run');
+    // 不退出，让程序继续运行，但会定期重试
+  }
 
   const hubClient = new HubClient({
     hubUrl: options.hub,
@@ -100,32 +120,30 @@ async function startClient(options: {
 
   // Handle signals
   process.on('SIGINT', () => {
-    console.log('\n\n正在关闭...');
+    console.log('\nShutting down...');
     hubClient.disconnect();
     db.close();
-    logger.close();
     process.exit(0);
   });
 
   process.on('SIGTERM', () => {
     hubClient.disconnect();
     db.close();
-    logger.close();
     process.exit(0);
   });
 
   // Connect and wait
   try {
     await hubClient.connect();
-    logger.info('✅ 已连接到 Hub');
-    logger.info(`请访问 https://open-claw-space.args.fun 并输入Token`);
-    logger.info('按 Ctrl+C 停止服务');
+
+    // Print concise startup message
+    const webUrl = options.hub.replace('wss://', 'https://').replace('/ws', '');
+    console.log(`\nopenclawspace started, open ${webUrl}, token: ${token}\n`);
 
     // Keep running
     await new Promise(() => {});
   } catch (err) {
-    logger.error(`❌ 连接 Hub 失败: ${err}`);
-    logger.close();
+    console.error(`Failed to connect: ${err}`);
     process.exit(1);
   }
 }
@@ -136,8 +154,6 @@ function generateToken(): string {
 }
 
 // Run if executed directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  program.parse();
-}
+program.parse();
 
 export { startClient, generateToken };

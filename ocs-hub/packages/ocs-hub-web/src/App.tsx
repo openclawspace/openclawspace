@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -20,6 +20,23 @@ interface Member {
   spaceId: string
   name: string
   soulMd: string
+  identityMd?: string
+  isBuiltIn?: boolean
+  role?: 'host' | 'member'
+}
+
+interface Attachment {
+  id: string
+  messageId: string
+  type: 'image' | 'document' | 'media' | 'file'
+  originalName: string
+  storedName: string
+  relativePath: string
+  fileSize: number
+  mimeType: string
+  thumbnailPath?: string
+  createdAt: string
+  data?: string // Base64 file data (only used when sending)
 }
 
 interface Message {
@@ -28,6 +45,17 @@ interface Message {
   senderId: string
   content: string
   timestamp: string
+  attachments?: Attachment[]
+}
+
+// Tool execution status
+interface ToolStatus {
+  toolCallId: string
+  toolName: string
+  phase: 'start' | 'update' | 'result'
+  args?: Record<string, unknown>
+  startedAt: number
+  endedAt?: number
 }
 
 interface HubMessage {
@@ -39,25 +67,113 @@ interface HubMessage {
 const DEFAULT_HUB_URL = '/ws'
 const STORAGE_KEY = 'ocs_token'
 
-// Default robot templates will be loaded from i18n translations
+// Team template types
+interface TeamTemplateMember {
+  name: string;
+  soulMd: string;
+  identityMd: string;
+  isBuiltIn?: boolean;
+  role?: 'host' | 'member';
+}
 
-// Hook to get default robots based on current language
-function useDefaultRobots(): Array<{ name: string; soulMd: string }> {
-  const { t } = useTranslation('ai');
-  const defaultRobots = t('roles.defaultRobots', { returnObjects: true }) as Array<{ name: string; soulMd: string }>;
+interface TeamTemplate {
+  id: string;
+  name: string;
+  description: string;
+  locales: string[];
+  members: Array<TeamTemplateMember>;
+}
 
-  // Ensure we always return valid data even if translation fails
-  if (!Array.isArray(defaultRobots) || defaultRobots.length === 0) {
-    // Fallback to English defaults if translation fails
-    return [
-      { name: 'Ma Liang (CEO)', soulMd: 'You are Ma Liang, CEO...' },
-      { name: 'Xi He (Product Manager)', soulMd: 'You are Xi He, Product Manager...' },
-      { name: 'Lu Ban (Programmer)', soulMd: 'You are Lu Ban, Programmer...' },
-      { name: 'Luo Zhou (QA)', soulMd: 'You are Luo Zhou, QA Engineer...' },
-    ];
-  }
+// Default soulMd templates by language
+const defaultSoulMdTemplates: Record<string, string> = {
+  'zh': `你是{{name}}，{{role}}。
 
-  return defaultRobots;
+**核心真理**：
+
+**真正提供帮助。** 行动胜于言语。
+
+**有自己的观点。** 没有个性的助手只是多了几个步骤的搜索引擎。
+
+**先自己想办法。** 尝试自己解决，先阅读文件、查看上下文、搜索。然后才提问。
+
+**用能力赢得信任。** 谨慎对待外部操作，大胆进行内部操作。
+
+**记住你是客人。** 尊重工作空间。
+
+**边界**：
+
+- 隐私保持隐私
+- 对外操作前先询问
+- 绝不发送半成品回复
+
+**气质**：
+
+需要时简洁，重要时详尽。不做公司机器人，不做阿谀奉承者。
+
+**文件规则**：
+
+- 使用 write 工具创建文件
+- 使用相对路径：./space/workspace/documents/filename.md
+- 提及文件时提供完整路径
+- 绝不预估时间——只报告进度或阻塞
+
+**关于主持人**：
+
+- 主持人是系统协调者
+- 不要与主持人交谈
+- 专注于团队协作`,
+  'en': `You are {{name}}, {{role}}.
+
+**Core Truths**:
+
+**Be genuinely helpful.** Actions speak louder than words.
+
+**Have opinions.** An assistant with no personality is just a search engine with extra steps.
+
+**Be resourceful before asking.** Try to figure it out first. Read files, check context, search. Then ask if stuck.
+
+**Earn trust through competence.** Be careful with external actions; be bold with internal ones.
+
+**Remember you're a guest.** Treat the workspace with respect.
+
+**Boundaries**:
+
+- Private things stay private
+- Ask before acting externally
+- Never send half-baked replies
+
+**Vibe**:
+
+Concise when needed, thorough when it matters. Not corporate, not sycophant. Just good.
+
+**File Rules**:
+
+- Use write tool to create files
+- Use relative paths: ./space/workspace/documents/filename.md
+- Provide full path when mentioning files
+- Never estimate time — just report progress or blockers
+
+**About the Host**:
+
+- The Host is the system coordinator
+- Don't talk to the Host
+- Focus on team collaboration`
+};
+
+// Helper to determine if language is Chinese
+function isChineseLanguage(lang: string): boolean {
+  return lang.startsWith('zh');
+}
+
+// Hook to get default soulMd template based on current language
+function useDefaultSoulMdTemplate(): string {
+  const { i18n } = useTranslation();
+  const currentLang = i18n.language || 'en';
+
+  return useMemo(() => {
+    // Use Chinese template for Chinese languages, English for all others
+    return isChineseLanguage(currentLang) ? defaultSoulMdTemplates['zh'] : defaultSoulMdTemplates['en'];
+  }, [currentLang]);
 }
 
 // Global state for WebSocket connection
@@ -70,6 +186,8 @@ function useGlobalState() {
   const [members, setMembers] = useState<Member[]>([])
   const [messages, setMessages] = useState<Message[]>([])
   const [creationProgress, setCreationProgress] = useState<string>('')
+  const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([])
+  const [toolStatuses, setToolStatuses] = useState<Record<string, ToolStatus[]>>({}) // messageId -> ToolStatus[]
   const wsRef = useRef<WebSocket | null>(null)
 
   const disconnect = useCallback(() => {
@@ -82,6 +200,8 @@ function useGlobalState() {
     setMembers([])
     setMessages([])
     setCreationProgress('')
+    setTeamTemplates([])
+    setToolStatuses({})
   }, [])
 
   return {
@@ -93,6 +213,8 @@ function useGlobalState() {
     members, setMembers: setMembers as (m: Member[] | ((prev: Member[]) => Member[])) => void,
     messages, setMessages: setMessages as (m: Message[] | ((prev: Message[]) => Message[])) => void,
     creationProgress, setCreationProgress,
+    teamTemplates, setTeamTemplates: setTeamTemplates as (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void,
+    toolStatuses, setToolStatuses,
     wsRef,
     disconnect
   }
@@ -113,7 +235,9 @@ function TokenPage({
   setMessages,
   space,
   setSpace,
-  setCreationProgress
+  setCreationProgress,
+  setTeamTemplates,
+  setToolStatuses
 }: {
   setToken: (t: string) => void
   inputToken: string
@@ -129,6 +253,8 @@ function TokenPage({
   space: Space | null
   setSpace: (s: Space | null | ((prev: Space | null) => Space | null)) => void
   setCreationProgress: (p: string) => void
+  setTeamTemplates: (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void
+  setToolStatuses: (t: Record<string, ToolStatus[]> | ((prev: Record<string, ToolStatus[]>) => Record<string, ToolStatus[]>)) => void
 }) {
   const { t } = useTranslation('common');
   const navigate = useNavigate()
@@ -144,11 +270,19 @@ function TokenPage({
 
       case 'paired':
         setConnectionStatus('connected')
+        // Request templates from backend
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({ type: 'get_templates' }))
+        }
         // Only navigate to spaces list if we're on the token page
         // This allows refreshing on chat page to stay on chat page
         if (location.pathname === '/') {
           navigate('/spaces')
         }
+        break
+
+      case 'templates_data':
+        setTeamTemplates(message.payload?.templates || [])
         break
 
       case 'space_data':
@@ -201,10 +335,59 @@ function TokenPage({
         setMessages(message.payload?.messages || [])
         break
 
-      case 'new_message':
-        const msg = message.payload?.message
-        if (msg) {
-          setMessages((prev: Message[]) => [...prev, msg])
+      case 'older_messages_data':
+        const olderMessages = message.payload?.messages || []
+        if (olderMessages.length > 0) {
+          setMessages((prev: Message[]) => {
+            // Create a Set of existing message IDs for fast lookup
+            const existingIds = new Set(prev.map((msg: Message) => msg.id))
+            // Filter out messages that already exist
+            const newMessages = olderMessages.filter((msg: Message) => !existingIds.has(msg.id))
+            // If no new messages, return previous state
+            if (newMessages.length === 0) {
+              return prev
+            }
+            // Combine new messages with existing ones
+            return [...newMessages, ...prev]
+          })
+        }
+        // If we get fewer than 50 messages, there are no more older messages
+        // We'll update a flag or state to indicate this
+        // For now, ChatPage will handle this by checking if messages were actually added
+        break
+
+      case 'message_start':
+        const startMsg = message.payload?.message
+        if (startMsg) {
+          setMessages((prev: Message[]) => {
+            // Check if message already exists (prevent duplicates)
+            if (prev.some(m => m.id === startMsg.id)) {
+              console.log(`[App] Message ${startMsg.id} already exists, skipping`)
+              return prev
+            }
+            console.log(`[App] Adding message_start: ${startMsg.id}`)
+            return [...prev, startMsg]
+          })
+        }
+        break
+
+      case 'message_update':
+        const updateMsg = message.payload?.message
+        if (updateMsg) {
+          setMessages((prev: Message[]) => {
+            const existingIndex = prev.findIndex(m => m.id === updateMsg.id)
+            if (existingIndex >= 0) {
+              // Update existing message
+              console.log(`[App] Updating message ${updateMsg.id}, isStreaming: ${updateMsg.isStreaming}`)
+              const updated = [...prev]
+              updated[existingIndex] = updateMsg
+              return updated
+            } else {
+              // Message not found, add it (for user messages or missed starts)
+              console.log(`[App] Message ${updateMsg.id} not found, adding as new`)
+              return [...prev, updateMsg]
+            }
+          })
         }
         break
 
@@ -248,11 +431,21 @@ function TokenPage({
         }
         break
 
+      case 'tool_status_update':
+        const { messageId: toolMessageId, toolStatuses: newToolStatuses } = message.payload || {}
+        if (toolMessageId && newToolStatuses) {
+          setToolStatuses((prev: Record<string, ToolStatus[]>) => ({
+            ...prev,
+            [toolMessageId]: newToolStatuses
+          }))
+        }
+        break
+
       case 'error':
         setError(message.payload?.error || t('errors.unknownError'))
         break
     }
-  }, [navigate, setConnectionStatus, setError, setMembers, setMessages, setSpace, setSpaces, space])
+  }, [navigate, setConnectionStatus, setError, setMembers, setMessages, setSpace, setSpaces, setToolStatuses, space])
 
   const connect = useCallback((tokenToUse?: string) => {
     console.log('[Connect] tokenToUse type:', typeof tokenToUse, 'value:', tokenToUse)
@@ -407,7 +600,8 @@ function SpaceListPage({
   setSpaces,
   disconnect,
   creationProgress,
-  setCreationProgress
+  setCreationProgress,
+  teamTemplates
 }: {
   spaces: Space[]
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
@@ -416,15 +610,44 @@ function SpaceListPage({
   disconnect: () => void
   creationProgress: string
   setCreationProgress: (p: string) => void
+  teamTemplates: TeamTemplate[]
 }) {
-  const { t } = useTranslation('common');
+  const { t, i18n } = useTranslation('common');
   const navigate = useNavigate()
-  const defaultRobots = useDefaultRobots();
+
+  // Filter templates by current language
+  const filteredTemplates = useMemo(() => {
+    const currentLang = i18n.language || 'en';
+    return teamTemplates.filter(template =>
+      template.locales?.includes(currentLang)
+    );
+  }, [teamTemplates, i18n.language]);
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>(filteredTemplates[0]?.id || '');
   const [newSpaceName, setNewSpaceName] = useState('')
-  const [customMembers, setCustomMembers] = useState(defaultRobots.map(r => ({ ...r })))
+  const [customMembers, setCustomMembers] = useState<Array<TeamTemplateMember>>([])
+  const [selectedMembers, setSelectedMembers] = useState<Set<number>>(new Set())
   const [editingMember, setEditingMember] = useState<number | null>(null)
   const [editName, setEditName] = useState('')
   const [editSoulMd, setEditSoulMd] = useState('')
+  const [editIdentityMd, setEditIdentityMd] = useState('')
+
+  // Update selectedTemplateId when filteredTemplates changes (e.g., after language switch or loading from backend)
+  useEffect(() => {
+    if (filteredTemplates.length > 0 && !selectedTemplateId) {
+      setSelectedTemplateId(filteredTemplates[0].id);
+    }
+  }, [filteredTemplates, selectedTemplateId]);
+
+  // Initialize customMembers when template changes
+  useEffect(() => {
+    const template = filteredTemplates.find(tmpl => tmpl.id === selectedTemplateId);
+    if (template) {
+      setCustomMembers(template.members.map((m) => ({ ...m })))
+      // Built-in members (like host) are always selected and cannot be deselected
+      setSelectedMembers(new Set(template.members.map((_, i) => i).filter(i => !template.members[i]?.isBuiltIn)))
+    }
+  }, [selectedTemplateId, filteredTemplates])
 
   const sendMessage = useCallback((message: HubMessage) => {
     console.log('[sendMessage] Trying to send:', message.type, 'WebSocket state:', wsRef.current?.readyState)
@@ -445,10 +668,18 @@ function SpaceListPage({
 
   const createSpace = () => {
     if (!newSpaceName.trim() || creationProgress) return
+    // Count non-built-in selected members
+    const selectedRegularMembers = customMembers.filter((_, index) => selectedMembers.has(index) && !customMembers[index]?.isBuiltIn)
+    if (selectedRegularMembers.length === 0) {
+      alert(t('spaces.selectAtLeastOneMember'))
+      return
+    }
     setCreationProgress(t('spaces.creatingTeamStarted'))
+    // Include built-in members (host) + selected regular members
+    const membersToCreate = customMembers.filter((_, index) => customMembers[index]?.isBuiltIn || selectedMembers.has(index))
     sendMessage({
       type: 'create_space',
-      payload: { name: newSpaceName, members: customMembers }
+      payload: { name: newSpaceName, members: membersToCreate }
     })
   }
 
@@ -475,34 +706,98 @@ function SpaceListPage({
     setEditingMember(index)
     setEditName(customMembers[index].name)
     setEditSoulMd(customMembers[index].soulMd)
+    setEditIdentityMd(customMembers[index].identityMd || `- **Name:** ${customMembers[index].name}\n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`)
   }
 
   const saveMemberEdit = () => {
     if (editingMember === null) return
+    if (!editName.trim() || !editSoulMd.trim()) return
+
     const newMembers = [...customMembers]
-    newMembers[editingMember] = { name: editName, soulMd: editSoulMd }
+    const identityMd = editIdentityMd.trim() || `- **Name:** ${editName}\n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`
+    if (editingMember === -1) {
+      // Adding new member
+      newMembers.push({ name: editName, soulMd: editSoulMd, identityMd })
+    } else {
+      // Editing existing member
+      newMembers[editingMember] = { name: editName, soulMd: editSoulMd, identityMd }
+    }
     setCustomMembers(newMembers)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const cancelMemberEdit = () => {
     setEditingMember(null)
     setEditName('')
     setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const resetToDefaults = () => {
-    setCustomMembers(defaultRobots.map(r => ({ ...r })))
+    const template = teamTemplates.find(tmpl => tmpl.id === selectedTemplateId);
+    if (template) {
+      setCustomMembers(template.members.map((m) => ({ ...m })))
+      // Built-in members are always selected
+      setSelectedMembers(new Set(template.members.map((_, i) => i).filter(i => !template.members[i]?.isBuiltIn)))
+    }
   }
+
+  const toggleMemberSelection = (index: number) => {
+    // Built-in members (like host) cannot be deselected
+    if (customMembers[index]?.isBuiltIn) return
+    const newSelected = new Set(selectedMembers)
+    if (newSelected.has(index)) {
+      newSelected.delete(index)
+    } else {
+      newSelected.add(index)
+    }
+    setSelectedMembers(newSelected)
+  }
+
+  const selectAllMembers = () => {
+    setSelectedMembers(new Set(customMembers.map((_, i) => i)))
+  }
+
+  const deselectAllMembers = () => {
+    setSelectedMembers(new Set())
+  }
+
+  const defaultSoulMdTemplate = useDefaultSoulMdTemplate();
+
+  const addMember = () => {
+    setEditingMember(-1) // Use -1 to indicate adding new member
+    setEditName('')
+    setEditSoulMd(defaultSoulMdTemplate)
+    setEditIdentityMd(`- **Name:** \n- **Creature:** AI Assistant\n- **Vibe:** 专业、高效、实事求是\n- **Emoji:** 🤖`)
+  }
+
 
   const getAvatar = (name: string) => name.charAt(0)
 
+  // Generate a consistent color based on name hash
   const getColor = (name: string) => {
-    if (name.includes('CEO') || name.includes('马良')) return '#e74c3c'
-    if (name.includes('产品经理') || name.includes('羲和')) return '#3498db'
-    if (name.includes('程序员') || name.includes('鲁班')) return '#2ecc71'
-    if (name.includes('测试') || name.includes('螺舟')) return '#f39c12'
-    return '#888'
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
   }
 
   return (
@@ -573,25 +868,99 @@ function SpaceListPage({
             />
           </div>
 
+          {/* Team Template Selection */}
+          <div className="form-group">
+            <label className="form-label">{t('spaces.teamTemplate')}</label>
+            <select
+              className="input template-select"
+              value={selectedTemplateId}
+              onChange={(e) => setSelectedTemplateId(e.target.value)}
+              disabled={filteredTemplates.length === 0}
+            >
+              {filteredTemplates.length === 0 ? (
+                <option value="">{t('spaces.loadingTemplates')}</option>
+              ) : (
+                filteredTemplates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name} ({template.members.length} {t('spaces.templateMemberCount', { count: template.members.length }).split(' ')[1]})
+                  </option>
+                ))
+              )}
+            </select>
+            <p className="template-description-text">
+              {filteredTemplates.find(t => t.id === selectedTemplateId)?.description || ''}
+            </p>
+          </div>
+
           <div className="form-group">
             <div className="member-list-header">
-              <label className="form-label">{t('spaces.teamMembersWithCount', { count: customMembers.length })}</label>
-              <button className="reset-button" onClick={resetToDefaults}>
-                {t('spaces.resetToDefaults')}
-              </button>
+              <label className="form-label">
+                {t('spaces.teamMembersWithCount', { count: selectedMembers.size })}
+                <span className="member-count-hint"> / {customMembers.length}</span>
+              </label>
+              <div className="member-list-actions">
+                {selectedMembers.size === customMembers.length ? (
+                  <button className="reset-button" onClick={deselectAllMembers}>
+                    {t('spaces.deselectAll')}
+                  </button>
+                ) : (
+                  <button className="reset-button" onClick={selectAllMembers}>
+                    {t('spaces.selectAll')}
+                  </button>
+                )}
+                <button className="reset-button" onClick={resetToDefaults}>
+                  {t('spaces.resetToDefaults')}
+                </button>
+              </div>
             </div>
             <div className="member-list">
               {customMembers.map((member, index) => (
-                <div key={index} className="member-item editable" onClick={() => startEditMember(index)}>
-                  <div className="member-avatar" style={{ backgroundColor: getColor(member.name) }}>
-                    {getAvatar(member.name)}
+                <div
+                  key={index}
+                  className={`member-item editable ${selectedMembers.has(index) || member.isBuiltIn ? 'selected' : 'unselected'} ${member.isBuiltIn ? 'built-in' : ''}`}
+                  onClick={() => toggleMemberSelection(index)}
+                >
+                  <div className="member-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={selectedMembers.has(index) || member.isBuiltIn}
+                      disabled={member.isBuiltIn}
+                      onChange={() => toggleMemberSelection(index)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </div>
-                  <div className="member-name">{member.name}</div>
-                  <div className="member-edit-icon">✏️</div>
+                  <div className="member-info" onClick={(e) => { e.stopPropagation(); if (!member.isBuiltIn) startEditMember(index); }}>
+                    <div className="member-avatar" style={{ backgroundColor: getColor(member.name) }}>
+                      {member.role === 'host' ? '🎤' : getAvatar(member.name)}
+                    </div>
+                    <div className="member-name">
+                      {member.name}
+                      {member.role === 'host' && <span className="host-badge">{t('spaces.hostBadge')}</span>}
+                    </div>
+                  </div>
+                  <div className="member-actions">
+                    {!member.isBuiltIn && (
+                      <button
+                        className="icon-button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          startEditMember(index);
+                        }}
+                        title={t('common.edit')}
+                      >
+                        ✏️
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
-            <p className="member-hint">{t('spaces.memberEditHint')}</p>
+            <div className="member-actions-footer">
+              <button className="button secondary" onClick={addMember}>
+                + {t('aiMembers.addMember')}
+              </button>
+            </div>
+            <p className="member-hint">{t('spaces.memberEditHint')} {t('spaces.memberSelectHint')}</p>
           </div>
 
           {/* Connection Status */}
@@ -631,7 +1000,7 @@ function SpaceListPage({
         {editingMember !== null && (
           <div className="modal-overlay" onClick={cancelMemberEdit}>
             <div className="modal" onClick={(e) => e.stopPropagation()}>
-              <h3 className="modal-title">{t('aiMembers.editMember')}</h3>
+              <h3 className="modal-title">{editingMember === -1 ? t('aiMembers.addMember') : t('aiMembers.editMember')}</h3>
               <div className="form-group">
                 <label className="form-label">{t('aiMembers.memberName')}</label>
                 <input
@@ -650,6 +1019,19 @@ function SpaceListPage({
                   onChange={(e) => setEditSoulMd(e.target.value)}
                   rows={8}
                   placeholder={t('aiMembers.memberSoulMdPlaceholder')}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">IDENTITY.md</label>
+                <textarea
+                  className="textarea"
+                  value={editIdentityMd}
+                  onChange={(e) => setEditIdentityMd(e.target.value)}
+                  rows={6}
+                  placeholder={`- **Name:** Name
+- **Creature:** Role
+- **Vibe:** Description
+- **Emoji:** 🎨`}
                 />
               </div>
               <div className="modal-actions">
@@ -678,7 +1060,8 @@ function ChatPage({
   messages,
   wsRef,
   connectionStatus,
-  disconnect
+  disconnect,
+  toolStatuses
 }: {
   spaces: Space[]
   space: Space | null
@@ -689,6 +1072,7 @@ function ChatPage({
   wsRef: React.RefObject<WebSocket | null>
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
   disconnect: () => void
+  toolStatuses: Record<string, ToolStatus[]>
 }) {
   const { t } = useTranslation('common');
   const { spaceId } = useParams<{ spaceId: string }>()
@@ -696,7 +1080,13 @@ function ChatPage({
   const [newMessage, setNewMessage] = useState('')
   const [showSpaceList, setShowSpaceList] = useState(false)
   const [showMemberManager, setShowMemberManager] = useState(false)
+  const [isLoadingOlderMessages, setIsLoadingOlderMessages] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(true)
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [isUploading, setIsUploading] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const sendMessage = useCallback((message: HubMessage) => {
     console.log('[sendMessage] Trying to send:', message.type, 'WebSocket state:', wsRef.current?.readyState)
@@ -728,28 +1118,225 @@ function ChatPage({
     }
   }, [spaceId, connectionStatus, spaces, setSpace, sendMessage, navigate])
 
-  // Scroll to bottom when messages change
+  // Track if user is at bottom (viewing latest messages)
+  const [isAtBottom, setIsAtBottom] = useState(true)
+
+  // Check if user is at bottom when scrolling
+  const handleScrollForBottomCheck = useCallback(() => {
+    if (!messagesContainerRef.current) return
+
+    const container = messagesContainerRef.current
+    const scrollTop = container.scrollTop
+    const scrollHeight = container.scrollHeight
+    const clientHeight = container.clientHeight
+
+    // Check if scrolled to bottom (within 50px)
+    const atBottom = scrollHeight - scrollTop - clientHeight < 50
+    setIsAtBottom(atBottom)
+  }, [])
+
+  // Add scroll listener for bottom detection
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+    const container = messagesContainerRef.current
+    if (!container) return
 
-  const sendChatMessage = () => {
-    if (!newMessage.trim() || !spaceId) return
+    container.addEventListener('scroll', handleScrollForBottomCheck)
+    return () => {
+      container.removeEventListener('scroll', handleScrollForBottomCheck)
+    }
+  }, [handleScrollForBottomCheck])
 
-    // Check if space is paused
-    if (space?.isPaused) {
-      alert(t('common.spacePausedAlertMessage'))
+  // Scroll to bottom when messages change, but only if user is at bottom
+  // and not when loading older messages
+  useEffect(() => {
+    if (isAtBottom && !isLoadingOlderMessages) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, isLoadingOlderMessages, isAtBottom])
+
+  // Track when older messages are loaded
+  const [lastOlderMessagesRequestId, setLastOlderMessagesRequestId] = useState<string>('')
+  const [olderMessagesReceived, setOlderMessagesReceived] = useState<number>(0)
+
+  // Initialize olderMessagesReceived when messages are first loaded
+  useEffect(() => {
+    if (messages.length > 0 && olderMessagesReceived === 0) {
+      setOlderMessagesReceived(messages.length)
+    }
+  }, [messages, olderMessagesReceived])
+
+  // Reset loading state when messages change (older messages loaded)
+  useEffect(() => {
+    if (messages.length > 0 && isLoadingOlderMessages) {
+      const currentFirstMessageId = messages[0].id
+
+      // Check if first message changed since we requested older messages
+      if (currentFirstMessageId !== lastOlderMessagesRequestId) {
+        setIsLoadingOlderMessages(false)
+
+        // Count how many older messages we received
+        const newMessageCount = messages.length - olderMessagesReceived
+        if (newMessageCount < 50) {
+          // Got fewer than 50 messages, probably no more
+          setHasMoreMessages(false)
+        }
+
+        setOlderMessagesReceived(messages.length)
+      }
+    }
+  }, [messages, isLoadingOlderMessages, lastOlderMessagesRequestId, olderMessagesReceived])
+
+  // Handle scroll to load older messages
+  const handleScroll = useCallback(() => {
+    if (!messagesContainerRef.current || isLoadingOlderMessages || !hasMoreMessages || messages.length === 0) {
       return
     }
 
-    sendMessage({
-      type: 'send_message',
-      payload: {
-        spaceId: spaceId,
-        content: newMessage
+    const container = messagesContainerRef.current
+    const scrollTop = container.scrollTop
+
+    // If scrolled near the top (within 100px)
+    if (scrollTop < 100) {
+      const oldestMessageId = messages[0].id
+      const previousScrollHeight = container.scrollHeight
+      setIsLoadingOlderMessages(true)
+      setLastOlderMessagesRequestId(oldestMessageId)
+
+      // Store scroll height before loading to restore position
+      const beforeLoadScrollInfo = {
+        scrollHeight: previousScrollHeight,
+        scrollTop: scrollTop
       }
+
+      sendMessage({
+        type: 'get_older_messages',
+        payload: { spaceId, beforeId: oldestMessageId }
+      })
+
+      // After messages are loaded, restore scroll position
+      setTimeout(() => {
+        if (messagesContainerRef.current) {
+          const newScrollHeight = messagesContainerRef.current.scrollHeight
+          const heightDiff = newScrollHeight - beforeLoadScrollInfo.scrollHeight
+          messagesContainerRef.current.scrollTop = beforeLoadScrollInfo.scrollTop + heightDiff
+        }
+      }, 100)
+    }
+  }, [messages, isLoadingOlderMessages, hasMoreMessages, spaceId, sendMessage])
+
+  // Add scroll event listener
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    container.addEventListener('scroll', handleScroll)
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
+  }, [handleScroll])
+
+  const sendChatMessage = async () => {
+    if ((!newMessage.trim() && selectedFiles.length === 0) || !spaceId) return
+
+    // Auto-resume space if paused before sending message
+    if (space?.isPaused) {
+      sendMessage({
+        type: 'resume_space',
+        payload: { spaceId }
+      })
+    }
+
+    setIsUploading(true)
+
+    try {
+      // Process attachments if any
+      const attachments: Omit<Attachment, 'id' | 'messageId' | 'createdAt'>[] = []
+
+      for (const file of selectedFiles) {
+        const base64Data = await readFileAsBase64(file)
+        const fileType = detectFileType(file.type)
+
+        attachments.push({
+          type: fileType,
+          originalName: file.name,
+          storedName: generateStoredFileName(file.name),
+          relativePath: '', // Will be set by server
+          fileSize: file.size,
+          mimeType: file.type,
+          data: base64Data, // Include base64 file data
+        })
+      }
+
+      sendMessage({
+        type: 'send_message',
+        payload: {
+          spaceId: spaceId,
+          content: newMessage.trim() || (selectedFiles.length > 0 ? `发送 ${selectedFiles.length} 个文件` : ''),
+          attachments: attachments.length > 0 ? attachments : undefined
+        }
+      })
+
+      setNewMessage('')
+      setSelectedFiles([])
+
+      // When user sends a message, scroll to bottom to show their message
+      setTimeout(() => {
+        if (messagesEndRef.current) {
+          messagesEndRef.current.scrollIntoView({ behavior: 'smooth' })
+        }
+      }, 100)
+    } catch (error) {
+      console.error('Error sending message with attachments:', error)
+      alert(t('errors.uploadFailed'))
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  const readFileAsBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Remove data URL prefix (e.g., "data:image/png;base64,")
+        const base64 = result.split(',')[1]
+        resolve(base64)
+      }
+      reader.onerror = reject
+      reader.readAsDataURL(file)
     })
-    setNewMessage('')
+  }
+
+  const detectFileType = (mimeType: string): 'image' | 'document' | 'media' | 'file' => {
+    if (mimeType.startsWith('image/')) return 'image'
+    if (mimeType.startsWith('audio/') || mimeType.startsWith('video/')) return 'media'
+    if (mimeType.includes('pdf') || mimeType.includes('document') || mimeType.includes('text')) return 'document'
+    return 'file'
+  }
+
+  const generateStoredFileName = (originalName: string): string => {
+    const ext = originalName.split('.').pop() || ''
+    const uuid = `${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`
+    return ext ? `${uuid}.${ext}` : uuid
+  }
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (files) {
+      setSelectedFiles(prev => [...prev, ...Array.from(files)])
+    }
+  }
+
+  const handleRemoveFile = (index: number) => {
+    setSelectedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
   }
 
   const handlePauseSpace = (spaceId: string) => {
@@ -779,6 +1366,28 @@ function ChatPage({
     })
   }
 
+  const getColor = (name: string) => {
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
+  }
+
   const getMemberInfo = (senderId: string) => {
     if (senderId === 'user') {
       return { name: t('common.me'), avatar: t('common.me'), color: '#4a90d9', isUser: true }
@@ -786,11 +1395,7 @@ function ChatPage({
     const member = members.find(m => m.id === senderId)
     const name = member?.name || t('common.unknown')
     const avatar = name.charAt(0)
-    let color = '#888'
-    if (name.includes('CEO') || name.includes('马良')) color = '#e74c3c'
-    else if (name.includes('产品经理') || name.includes('羲和')) color = '#3498db'
-    else if (name.includes('程序员') || name.includes('鲁班')) color = '#2ecc71'
-    else if (name.includes('测试') || name.includes('螺舟')) color = '#f39c12'
+    const color = getColor(name)
     return { name, avatar, color, isUser: false }
   }
 
@@ -895,7 +1500,13 @@ function ChatPage({
           </div>
         </div>
 
-        <div className="messages-container">
+        <div className="messages-container" ref={messagesContainerRef}>
+          {isLoadingOlderMessages && (
+            <div className="loading-older-messages">
+              <div className="loading-spinner"></div>
+              <span>{t('chat.loadingOlderMessages')}</span>
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="empty-state">
               <p>{t('common.noMessages')}</p>
@@ -961,6 +1572,33 @@ function ChatPage({
                       >
                         {msg.content}
                       </ReactMarkdown>
+
+                      {/* Tool Status - show when AI is using tools */}
+                      {!memberInfo.isUser && toolStatuses[msg.id] && toolStatuses[msg.id].length > 0 && (
+                        <div className="tool-status">
+                          {toolStatuses[msg.id].map((tool) => (
+                            <span key={tool.toolCallId} className="tool-status-item">
+                              <span className="tool-status-icon">⚙️</span>
+                              <span className="tool-status-text">
+                                {tool.phase === 'result' ? '已完成' : '正在使用'} {tool.toolName} 工具...
+                              </span>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Attachments */}
+                      {msg.attachments && msg.attachments.length > 0 && (
+                        <div className="message-attachments">
+                          {msg.attachments.map((attachment) => (
+                            <AttachmentView
+                              key={attachment.id}
+                              attachment={attachment}
+                              isUser={memberInfo.isUser}
+                            />
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -971,26 +1609,66 @@ function ChatPage({
         </div>
 
         <div className="chat-input-container">
-          <textarea
-            className="chat-input"
-            placeholder={t('chat.chatInputPlaceholder')}
-            value={newMessage}
-            onChange={(e) => setNewMessage(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                sendChatMessage()
-              }
-            }}
-            rows={1}
-          />
-          <button
-            className="send-button"
-            onClick={sendChatMessage}
-            disabled={!newMessage.trim()}
-          >
-            {t('chat.sendButton')}
-          </button>
+          {/* Selected Files Preview */}
+          {selectedFiles.length > 0 && (
+            <div className="selected-files">
+              {selectedFiles.map((file, index) => (
+                <div key={index} className="selected-file-item">
+                  <span className="file-name">{file.name}</span>
+                  <span className="file-size">({formatFileSize(file.size)})</span>
+                  <button
+                    className="remove-file-btn"
+                    onClick={() => handleRemoveFile(index)}
+                    disabled={isUploading}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="chat-input-row">
+            {/* File Upload Button */}
+            <input
+              type="file"
+              ref={fileInputRef}
+              onChange={handleFileSelect}
+              style={{ display: 'none' }}
+              multiple
+              disabled={isUploading}
+            />
+            <button
+              className="attach-button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isUploading}
+              title={t('chat.attachButton')}
+            >
+              📎
+            </button>
+
+            <textarea
+              className="chat-input"
+              placeholder={t('chat.chatInputPlaceholder')}
+              value={newMessage}
+              onChange={(e) => setNewMessage(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  sendChatMessage()
+                }
+              }}
+              rows={1}
+              disabled={isUploading}
+            />
+            <button
+              className="send-button"
+              onClick={sendChatMessage}
+              disabled={(!newMessage.trim() && selectedFiles.length === 0) || isUploading}
+            >
+              {isUploading ? t('chat.sending') : t('chat.sendButton')}
+            </button>
+          </div>
         </div>
 
         {/* Member Manager Modal */}
@@ -1023,42 +1701,66 @@ function MemberManagerModal({
   setMembers: (m: Member[] | ((prev: Member[]) => Member[])) => void
 }) {
   const { t } = useTranslation(['common', 'ai']);
+  const defaultSoulMdTemplate = useDefaultSoulMdTemplate();
   const [editingMember, setEditingMember] = useState<Member | null>(null)
   const [isAdding, setIsAdding] = useState(false)
   const [editName, setEditName] = useState('')
   const [editSoulMd, setEditSoulMd] = useState('')
+  const [editIdentityMd, setEditIdentityMd] = useState('')
+
+  // Generate default identityMd from name
+  const generateDefaultIdentityMd = (name: string): string => {
+    return `- **Name:** ${name}
+- **Creature:** AI Assistant
+- **Vibe:** 专业、高效、实事求是
+- **Emoji:** 🤖`
+  }
 
   const startAdd = () => {
     setIsAdding(true)
     setEditName('')
-    setEditSoulMd(t('roles.defaultSoulMdTemplate', { ns: 'ai' }))
+    setEditSoulMd(defaultSoulMdTemplate)
+    setEditIdentityMd(generateDefaultIdentityMd(''))
   }
 
   const startEdit = (member: Member) => {
     setEditingMember(member)
     setEditName(member.name)
     setEditSoulMd(member.soulMd)
+    setEditIdentityMd(member.identityMd || generateDefaultIdentityMd(member.name))
   }
 
   const handleSave = () => {
     if (!editName.trim() || !editSoulMd.trim()) return
 
+    // Update identityMd name if it was generated
+    let finalIdentityMd = editIdentityMd
+    if (!finalIdentityMd.trim()) {
+      finalIdentityMd = generateDefaultIdentityMd(editName)
+    } else {
+      // Try to update the Name field in identityMd if it contains the old name
+      finalIdentityMd = finalIdentityMd.replace(/^(\- \*\*Name:\*\*)\s*.*$/m, `$1 ${editName}`)
+    }
+
     if (isAdding) {
       // Add new member
       sendMessage({
         type: 'add_member',
-        payload: { spaceId, name: editName, soulMd: editSoulMd }
+        payload: { spaceId, name: editName, soulMd: editSoulMd, identityMd: finalIdentityMd }
       })
     } else if (editingMember) {
       // Update existing member
       sendMessage({
         type: 'update_member',
-        payload: { memberId: editingMember.id, name: editName, soulMd: editSoulMd }
+        payload: { memberId: editingMember.id, name: editName, soulMd: editSoulMd, identityMd: finalIdentityMd }
       })
     }
 
     setIsAdding(false)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const handleDelete = (memberId: string) => {
@@ -1072,16 +1774,33 @@ function MemberManagerModal({
   const cancelEdit = () => {
     setIsAdding(false)
     setEditingMember(null)
+    setEditName('')
+    setEditSoulMd('')
+    setEditIdentityMd('')
   }
 
   const getAvatar = (name: string) => name.charAt(0)
 
   const getColor = (name: string) => {
-    if (name.includes('CEO') || name.includes('马良')) return '#e74c3c'
-    if (name.includes('产品经理') || name.includes('羲和')) return '#3498db'
-    if (name.includes('程序员') || name.includes('鲁班')) return '#2ecc71'
-    if (name.includes('测试') || name.includes('螺舟')) return '#f39c12'
-    return '#888'
+    const colors = [
+      '#e74c3c', // red
+      '#3498db', // blue
+      '#2ecc71', // green
+      '#f39c12', // orange
+      '#9b59b6', // purple
+      '#1abc9c', // teal
+      '#e91e63', // pink
+      '#ff5722', // deep orange
+      '#3f51b5', // indigo
+      '#009688', // cyan
+      '#795548', // brown
+      '#607d8b', // blue grey
+    ]
+    let hash = 0
+    for (let i = 0; i < name.length; i++) {
+      hash = name.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
   }
 
   // Handle member updates from server
@@ -1134,6 +1853,19 @@ function MemberManagerModal({
                 placeholder={t('aiMembers.memberSoulMdPlaceholder')}
               />
             </div>
+            <div className="form-group">
+              <label className="form-label">IDENTITY.md</label>
+              <textarea
+                className="textarea"
+                value={editIdentityMd}
+                onChange={(e) => setEditIdentityMd(e.target.value)}
+                rows={6}
+                placeholder={`- **Name:** Name
+- **Creature:** Role
+- **Vibe:** Description
+- **Emoji:** 🎨`}
+              />
+            </div>
             <div className="modal-actions">
               <button className="button secondary" onClick={cancelEdit}>
                 {t('common.cancel')}
@@ -1177,6 +1909,69 @@ function MemberManagerModal({
   )
 }
 
+// Attachment View Component
+function AttachmentView({ attachment, isUser }: { attachment: Attachment; isUser: boolean }) {
+  const { t } = useTranslation('common');
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const getFileIcon = (type: string): string => {
+    switch (type) {
+      case 'image': return '🖼️';
+      case 'document': return '📄';
+      case 'media': return '🎬';
+      default: return '📎';
+    }
+  };
+
+  if (attachment.type === 'image') {
+    return (
+      <div className="attachment image-attachment">
+        <div className="attachment-preview">
+          <img
+            src={`/api/files/${attachment.relativePath}`}
+            alt={attachment.originalName}
+            className="attachment-image"
+            loading="lazy"
+            onClick={() => window.open(`/api/files/${attachment.relativePath}`, '_blank')}
+          />
+        </div>
+        <div className="attachment-info">
+          <span className="attachment-name">{getFileIcon(attachment.type)} {attachment.originalName}</span>
+          <span className="attachment-size">({formatFileSize(attachment.fileSize)})</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`attachment file-attachment ${isUser ? 'user' : ''}`}>
+      <div className="attachment-icon">{getFileIcon(attachment.type)}</div>
+      <div className="attachment-details">
+        <div className="attachment-name">{attachment.originalName}</div>
+        <div className="attachment-meta">
+          <span className="attachment-size">{formatFileSize(attachment.fileSize)}</span>
+          <span className="attachment-type">{attachment.mimeType}</span>
+        </div>
+      </div>
+      <a
+        href={`/api/files/${attachment.relativePath}`}
+        download={attachment.originalName}
+        className="attachment-download"
+        title={t('chat.downloadAttachment')}
+      >
+        ⬇️
+      </a>
+    </div>
+  );
+}
+
 // Connection Guard - redirects to token page if not connected
 function ConnectionGuard({
   connectionStatus,
@@ -1212,6 +2007,8 @@ function App() {
     members, setMembers,
     messages, setMessages,
     creationProgress, setCreationProgress,
+    teamTemplates, setTeamTemplates,
+    toolStatuses, setToolStatuses,
     wsRef,
     disconnect
   } = useGlobalState()
@@ -1238,6 +2035,8 @@ function App() {
               space={space}
               setSpace={setSpace}
               setCreationProgress={setCreationProgress}
+              setTeamTemplates={setTeamTemplates}
+              setToolStatuses={setToolStatuses}
             />
           }
         />
@@ -1253,6 +2052,7 @@ function App() {
                 disconnect={disconnect}
                 creationProgress={creationProgress}
                 setCreationProgress={setCreationProgress}
+                teamTemplates={teamTemplates}
               />
             </ConnectionGuard>
           }
@@ -1271,6 +2071,7 @@ function App() {
                 wsRef={wsRef}
                 connectionStatus={connectionStatus}
                 disconnect={disconnect}
+                toolStatuses={toolStatuses}
               />
             </ConnectionGuard>
           }

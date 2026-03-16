@@ -4,6 +4,7 @@ import { AIDiscussionController } from './ai-discussion-controller.js';
 import { Member } from './database.js';
 import { getLogger } from './logger.js';
 import { getUserProfileManager } from './user-profile.js';
+import { teamTemplates } from './templates/index.js';
 
 const logger = getLogger();
 
@@ -34,6 +35,14 @@ export class HubClient {
     this.hubUrl = options.hubUrl;
     this.token = options.token;
     this.spaceManager = options.spaceManager;
+
+    // Set up tool status forwarding to browser
+    this.spaceManager.onToolStatusChanged = (memberId: string, messageId: string, toolStatuses: any[]) => {
+      this.send({
+        type: 'tool_status_update',
+        payload: { memberId, messageId, toolStatuses }
+      });
+    };
   }
 
   async connect(): Promise<void> {
@@ -131,6 +140,10 @@ export class HubClient {
         this.sendMessagesData(message.payload?.spaceId);
         break;
 
+      case 'get_older_messages':
+        this.sendOlderMessagesData(message.payload?.spaceId, message.payload?.beforeId);
+        break;
+
       case 'send_message':
         this.handleUserMessage(message.payload);
         break;
@@ -141,6 +154,10 @@ export class HubClient {
 
       case 'get_all_spaces':
         this.sendAllSpaces();
+        break;
+
+      case 'get_templates':
+        this.sendTemplatesData();
         break;
 
       case 'ping':
@@ -175,11 +192,15 @@ export class HubClient {
         break;
 
       case 'pause_space':
-        this.handlePauseSpace(message.payload);
+        this.handlePauseSpace(message.payload).catch(error => {
+          logger.error(`[HubClient] Error pausing space: ${error}`);
+        });
         break;
 
       case 'resume_space':
-        this.handleResumeSpace(message.payload);
+        this.handleResumeSpace(message.payload).catch(error => {
+          logger.error(`[HubClient] Error resuming space: ${error}`);
+        });
         break;
 
       default:
@@ -217,16 +238,70 @@ export class HubClient {
 
     // Create and start AI discussion controller for this space
     const controller = new AIDiscussionController(this.spaceManager, space.id);
-    controller.onMessageSent = (member: Member, content: string) => {
-      const message = this.spaceManager.getMessages(space.id).find(m =>
-        m.senderId === member.id && m.content === content
-      );
-      if (message) {
+    controller.onMessageUpdate = (member: Member, messageId: string, content: string, isStreaming: boolean, attachments?: any[]) => {
+      logger.info(`[HubClient] onMessageUpdate: ${member.name}, messageId: ${messageId}, content length: ${content.length}, isStreaming: ${isStreaming}`);
+
+      // Get the full message from database for complete data
+      const messages = this.spaceManager.getMessages(space.id);
+      let message = messages.find(m => m.id === messageId);
+
+      if (!message) {
+        logger.error(`[HubClient] Message ${messageId} not found for ${member.name}!`);
+        return;
+      }
+
+      // For message_start (empty content, streaming), broadcast as message_start
+      if (content === '' && isStreaming) {
+        logger.info(`[HubClient] Broadcasting message_start for ${member.name}`);
         this.send({
-          type: 'new_message',
-          payload: { message, senderName: member.name }
+          type: 'message_start',
+          payload: {
+            message: {
+              ...message,
+              content,
+              isStreaming: true
+            },
+            senderName: member.name
+          }
+        });
+      } else if (isStreaming) {
+        // For message_update (streaming in progress)
+        logger.info(`[HubClient] Broadcasting message_update (streaming) for ${member.name}`);
+        this.send({
+          type: 'message_update',
+          payload: {
+            message: {
+              ...message,
+              content,
+              isStreaming: true
+            },
+            senderName: member.name
+          }
+        });
+      } else {
+        // For message_update (completed)
+        logger.info(`[HubClient] Broadcasting message_update (completed) for ${member.name}`);
+        // If attachments provided, include them
+        const finalMessage = attachments && attachments.length > 0
+          ? { ...message, content, isStreaming: false, attachments }
+          : { ...message, content, isStreaming: false };
+        this.send({
+          type: 'message_update',
+          payload: {
+            message: finalMessage,
+            senderName: member.name
+          }
         });
       }
+    };
+    controller.onSpacePaused = (reason: string) => {
+      // Notify browser that space has been auto-paused by AI host
+      const pausedSpace = this.spaceManager.getSpace(space.id);
+      this.send({
+        type: 'space_paused',
+        payload: { spaceId: space.id, isPaused: pausedSpace?.isPaused || false, pausedAt: pausedSpace?.pausedAt, reason }
+      });
+      this.sendSpaceData();
     };
     controller.start();
     this.aiControllers.set(space.id, controller);
@@ -238,16 +313,16 @@ export class HubClient {
   }
 
   private async handleUserMessage(payload: any): Promise<void> {
-    const { spaceId, content } = payload || {};
+    const { spaceId, content, attachments } = payload || {};
     if (!spaceId || !content) return;
 
-    // Store user message
-    const message = this.spaceManager.addMessage(spaceId, 'user', content);
+    // Store user message with attachments if provided
+    const message = await this.spaceManager.addMessage(spaceId, 'user', content, attachments);
 
-    // Broadcast to browser
+    // Broadcast as message_update (completed, since user message is not streaming)
     this.send({
-      type: 'new_message',
-      payload: { message }
+      type: 'message_update',
+      payload: { message: { ...message, isStreaming: false } }
     });
 
     // Notify AI controller of activity
@@ -319,6 +394,13 @@ export class HubClient {
     });
   }
 
+  private async sendTemplatesData(): Promise<void> {
+    this.send({
+      type: 'templates_data',
+      payload: { templates: teamTemplates }
+    });
+  }
+
   private async sendMembersData(spaceId?: string): Promise<void> {
     if (!spaceId) return;
     const members = this.spaceManager.getMembers(spaceId);
@@ -337,8 +419,17 @@ export class HubClient {
     });
   }
 
+  private async sendOlderMessagesData(spaceId?: string, beforeId?: string): Promise<void> {
+    if (!spaceId || !beforeId) return;
+    const messages = this.spaceManager.getMessagesBeforeId(spaceId, beforeId, 50);
+    this.send({
+      type: 'older_messages_data',
+      payload: { messages }
+    });
+  }
+
   private async handleAddMember(payload: any): Promise<void> {
-    const { spaceId, name, soulMd } = payload || {};
+    const { spaceId, name, soulMd, identityMd } = payload || {};
     if (!spaceId || !name || !soulMd) {
       this.send({
         type: 'error',
@@ -348,7 +439,7 @@ export class HubClient {
     }
 
     try {
-      const member = await this.spaceManager.addMember(spaceId, name, soulMd);
+      const member = await this.spaceManager.addMember(spaceId, name, soulMd, identityMd);
       this.send({
         type: 'member_added',
         payload: { member }
@@ -371,7 +462,7 @@ export class HubClient {
   }
 
   private async handleUpdateMember(payload: any): Promise<void> {
-    const { memberId, name, soulMd } = payload || {};
+    const { memberId, name, soulMd, identityMd } = payload || {};
     if (!memberId || !name || !soulMd) {
       this.send({
         type: 'error',
@@ -381,7 +472,7 @@ export class HubClient {
     }
 
     try {
-      const member = await this.spaceManager.updateMember(memberId, name, soulMd);
+      const member = await this.spaceManager.updateMember(memberId, name, soulMd, identityMd);
       this.send({
         type: 'member_updated',
         payload: { member }
@@ -442,7 +533,7 @@ export class HubClient {
     }
   }
 
-  private handlePauseSpace(payload: any): void {
+  private async handlePauseSpace(payload: any): Promise<void> {
     const { spaceId } = payload || {};
     if (!spaceId) {
       this.send({
@@ -453,7 +544,7 @@ export class HubClient {
     }
 
     try {
-      const success = this.spaceManager.pauseSpace(spaceId);
+      const success = await this.spaceManager.pauseSpace(spaceId);
       if (success) {
         const space = this.spaceManager.getSpace(spaceId);
         this.send({
@@ -477,7 +568,7 @@ export class HubClient {
     }
   }
 
-  private handleResumeSpace(payload: any): void {
+  private async handleResumeSpace(payload: any): Promise<void> {
     const { spaceId } = payload || {};
     if (!spaceId) {
       this.send({
@@ -488,7 +579,7 @@ export class HubClient {
     }
 
     try {
-      const success = this.spaceManager.resumeSpace(spaceId);
+      const success = await this.spaceManager.resumeSpace(spaceId);
       if (success) {
         const space = this.spaceManager.getSpace(spaceId);
         this.send({
@@ -498,9 +589,10 @@ export class HubClient {
         // Also send updated space data
         this.sendSpaceData();
 
-        // Trigger activity to reset silence timer
+        // Restart AI controller for resumed space
         const controller = this.aiControllers.get(spaceId);
         if (controller) {
+          controller.start();
           controller.onActivity();
         }
       } else {
@@ -554,14 +646,44 @@ export class HubClient {
       if (!this.aiControllers.has(space.id)) {
         logger.info(`[HubClient] Creating AI controller for space: ${space.id}`);
         const controller = new AIDiscussionController(this.spaceManager, space.id);
-        controller.onMessageSent = (member: Member, content: string) => {
-          const message = this.spaceManager.getMessages(space.id).find(m =>
-            m.senderId === member.id && m.content === content
-          );
-          if (message) {
+        controller.onMessageUpdate = (member: Member, messageId: string, content: string, isStreaming: boolean, attachments?: any[]) => {
+          const messages = this.spaceManager.getMessages(space.id);
+          let message = messages.find(m => m.id === messageId);
+
+          if (!message) {
+            logger.error(`[HubClient] Message ${messageId} not found for ${member.name}!`);
+            return;
+          }
+
+          if (content === '' && isStreaming) {
+            // message_start
             this.send({
-              type: 'new_message',
-              payload: { message, senderName: member.name }
+              type: 'message_start',
+              payload: {
+                message: { ...message, content, isStreaming: true },
+                senderName: member.name
+              }
+            });
+          } else if (isStreaming) {
+            // message_update (streaming)
+            this.send({
+              type: 'message_update',
+              payload: {
+                message: { ...message, content, isStreaming: true },
+                senderName: member.name
+              }
+            });
+          } else {
+            // message_update (completed)
+            const finalMessage = attachments && attachments.length > 0
+              ? { ...message, content, isStreaming: false, attachments }
+              : { ...message, content, isStreaming: false };
+            this.send({
+              type: 'message_update',
+              payload: {
+                message: finalMessage,
+                senderName: member.name
+              }
             });
           }
         };

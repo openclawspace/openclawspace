@@ -11,7 +11,7 @@ export class Logger {
   private logDir: string;
 
   constructor(logDir?: string) {
-    this.logDir = logDir || path.join(os.homedir(), '.ocs-client', 'logs');
+    this.logDir = logDir || path.join(os.homedir(), '.openclawspace', 'logs');
     this.ensureLogDir();
 
     // 创建按日期命名的日志文件

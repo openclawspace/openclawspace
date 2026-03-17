@@ -62,7 +62,7 @@ function serveStaticFile(filePath: string, res: http.ServerResponse): boolean {
 }
 
 // Base directory for file storage (ocs-client spaces directory)
-const SPACES_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.ocs-client', 'spaces');
+const SPACES_DIR = path.join(process.env.HOME || process.env.USERPROFILE || '.', '.openclawspace', 'spaces');
 
 // Helper function to safely serve files from spaces directory
 function serveSpaceFile(filePath: string, res: http.ServerResponse, downloadName?: string): boolean {

@@ -19,7 +19,7 @@ services:
     networks:
       - args
     volumes:
-      - /root/app/osc-hub/data:/app/.ocs-client
+      - /root/app/osc-hub/data:/app/.openclawspace
 
 networks:
   args:

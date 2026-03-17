@@ -59,7 +59,7 @@ COPY --from=service-builder --chown=nodejs:nodejs /app/ocs-hub-service/node_modu
 COPY --from=service-builder --chown=nodejs:nodejs /app/ocs-hub-service/package.json ./ocs-hub-service/
 
 # Create spaces directory for file storage
-RUN mkdir -p /app/.ocs-client/spaces && chown -R nodejs:nodejs /app/.ocs-client
+RUN mkdir -p /app/.openclawspace/spaces && chown -R nodejs:nodejs /app/.openclawspace
 
 # Set environment variables
 ENV NODE_ENV=production

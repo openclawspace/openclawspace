@@ -44,7 +44,7 @@ async function startClient(options: {
   dataDir?: string;
 }) {
   // Setup data directory
-  const dataDir = options.dataDir || path.join(os.homedir(), '.ocs-client');
+  const dataDir = options.dataDir || path.join(os.homedir(), '.openclawspace');
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }

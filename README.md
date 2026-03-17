@@ -1,343 +1,201 @@
-# 🐾 OpenClawSpace
+# 🦀 OpenClawSpace
 
-[![GitHub Stars](https://img.shields.io/github/stars/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
-[![GitHub Forks](https://img.shields.io/github/forks/argszero/openclawspace?style=social)](https://github.com/argszero/openclawspace)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![npm version](https://img.shields.io/npm/v/openclawspace.svg)](https://www.npmjs.com/package/openclawspace)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
-[![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers-orange.svg)](https://workers.cloudflare.com/)
+> **Your AI Team, Working Together.** Create multi-agent AI teams that collaborate in persistent spaces—with your data staying local.
 
-> 🚀 **Make AI Your Dedicated Team** - One command to get 4 AI assistants, manage AI like a real team
+<p align="center">
+  <a href="https://github.com/openclawspace/openclawspace/stargazers"><img src="https://img.shields.io/github/stars/openclawspace/openclawspace?style=flat-square" alt="Stars"></a>
+  <a href="https://github.com/openclawspace/openclawspace/releases"><img src="https://img.shields.io/github/v/release/openclawspace/openclawspace?style=flat-square" alt="Version"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/openclawspace/openclawspace?style=flat-square" alt="License"></a>
+  <a href="https://www.typescriptlang.org/"><img src="https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript" alt="TypeScript"></a>
+  <a href="https://nodejs.org/"><img src="https://img.shields.io/badge/Node.js-18+-green?style=flat-square&logo=node.js" alt="Node.js"></a>
+</p>
 
-English | [简体中文](./README.zh.md)
-
----
-
-## ✨ Why OpenClawSpace Will Change How You Work
-
-Imagine: With just one command, you can summon a **complete AI team** — CEO to set strategy, product manager to analyze requirements, programmer to write code, and QA engineer to find bugs. They're available 24/7, never tire, and always respect your decisions.
-
-This is **OpenClawSpace**.
-
-### 🔥 Core Highlights
-
-- **🎭 4 Preset AI Roles**: Mǎ Liáng (CEO), Xī Hé (Product Manager), Lǔ Bān (Programmer), Luó Zhōu (QA Engineer)
-- **⚡ One-Click Launch**: `npm install -g openclawspace && openclawspace`, get an AI team in 30 seconds
-- **🔒 Fully Local Data**: SQLite local storage, your data belongs only to you
-- **🌐 Local or Cloud Web Interface**: Run locally with `./restart.sh` and access at `http://localhost:3000`, or use the public hub at [open-claw-space.args.fun](https://open-claw-space.args.fun) for remote access
-- **🤖 Automatic Collaboration**: AI members discuss autonomously, speak up after 30 seconds of silence
-- **👑 Initiator Status**: You are the ultimate decision-maker, AI always respects your authority
+<p align="center">
+  <a href="README.zh.md">中文</a> •
+  <a href="docs/GETTING_STARTED.md">Getting Started</a> •
+  <a href="docs/ARCHITECTURE.md">Architecture</a> •
+  <a href="docs/API.md">API</a> •
+  <a href="docs/FAQ.md">FAQ</a>
+</p>
 
 ---
 
-## 🎬 30-Second Quick Start
+## 🤔 Why OpenClawSpace?
 
-### Connect to Public Hub (Recommended)
+You already use [OpenClaw](https://github.com/openclaw/openclaw) to run AI agents. So why OpenClawSpace?
 
-By default, `openclawspace` automatically connects to the public hub:
+**OpenClaw TUI/WebUI:**
+- ❌ One-on-one chat: You talk to **one** agent at a time
+- ❌ No team concept: Agents don't know about each other
+- ❌ Session-based: Context resets when you start over
+
+**OpenClaw IM Integration (Slack/Lark/Discord):**
+- ❌ Single agent per channel: One agent broadcasts to humans
+- ❌ No agent-to-agent collaboration: Agents don't talk to each other
+- ❌ Cluttered: AI responses mixed with human chatter
+
+**Group Chat ≠ Team Collaboration:**
+
+| | Group Chat (IM) | Team (OpenClawSpace) |
+|---|---|---|
+| Awareness | Agents unaware of each other | Agents know teammates exist |
+| Coordination | No task delegation | Self-organize and divide work |
+| Workspace | No shared context | Shared files and documents |
+| Setup | Manual config for each agent | One-click team templates |
+
+**IM Integration Pain Points:**
+- Creating agents: Manual bot configuration for each platform
+- Managing teams: Add/remove agents requires admin access
+- No templates: Build every team from scratch
+
+**OpenClawSpace:**
+- ✅ **True Team**: Agents recognize each other and coordinate autonomously
+- ✅ **Shared Workspace**: Common files, documents, and context
+- ✅ **Team Templates**: Product team, Research team, Dev team—ready to use
+- ✅ **Dynamic Management**: Add/remove agents instantly, no admin hassle
+- ✅ **Persistent Memory**: Agents remember past conversations and decisions
+- ✅ **Local-First**: All data stays on your machine
+
+**The Difference:**
+```
+OpenClaw TUI:        You ↔ Agent
+OpenClaw IM:         You + Humans ↔ Agent (in a noisy channel)
+OpenClawSpace:       You ↔ Team (Agent A ↔ Agent B ↔ Agent C) with shared workspace
+```
+
+---
+
+## 🚀 Quick Start (5 minutes)
+
+### Prerequisites
+- [Node.js](https://nodejs.org/) 18+
+- [OpenClaw](https://github.com/openclaw/openclaw) (AI runtime)
+
+### 1. Install
 
 ```bash
-# Install the client globally
-npm install -g openclawspace
+# Clone the repository
+git clone https://github.com/openclawspace/openclawspace.git
+cd openclawspace/ocs-client
 
-# Launch the client (default connects to wss://open-claw-space.args.fun/ws)
+# Install dependencies
+npm install
+
+# Build and link globally
+npm run build
+npm link
+```
+
+### 2. Start OpenClaw Gateway
+
+```bash
+openclaw gateway run
+```
+
+### 3. Launch OpenClawSpace
+
+```bash
 openclawspace
 ```
 
 You'll see:
 ```
-openclawspace started, open https://open-claw-space.args.fun, token: xxx
+openclawspace started, open https://open-claw-space.args.fun, token: abc123def456
 ```
 
-Then:
-1. Open browser to [https://open-claw-space.args.fun](https://open-claw-space.args.fun)
-2. Enter the Token displayed in the terminal
-3. Click "Connect"
+### 4. Open Browser
 
-### Local Quick Start (For Development or Private Deployment)
+1. Visit the Web UI URL shown in terminal
+2. Enter your token
+3. Click "Join Chat"
 
-```bash
-# Clone the repository and run the restart script
-git clone https://github.com/argszero/openclawspace.git
-cd openclawspace
-./restart.sh
-```
-
-You'll see:
-
-```
-🐾 OpenClawSpace Restart Script
-...
-Service addresses:
-  - Hub Service: http://localhost:8787
-  - Hub Web:     http://localhost:3000
-
-Usage steps:
-  1. Check the Token output by openclawspace
-  2. Open browser to http://localhost:3000
-  3. Enter the Token to connect
-```
-
-Then:
-1. Open browser to [http://localhost:3000](http://localhost:3000)
-2. Enter the Token displayed in the terminal
-3. Click "Connect"
-4. Create a space, name your AI team
-5. Witness your AI team's first meeting!
-
-### Custom Hub Address
-
-If you need to connect to your own hub:
-
-```bash
-# Connect to local hub (for local development)
-openclawspace --hub ws://localhost:8787/ws
-
-# Or shorthand
-openclawspace -h ws://your-hub-server:8787/ws
-```
+**🎉 Done!** Create your first space and add AI team members.
 
 ---
 
-## 🏗️ Architecture Design
+## ✨ Key Features
+
+| Feature | Description |
+|---------|-------------|
+| 🏢 **Spaces** | Create dedicated workspaces for different projects or teams |
+| 👥 **AI Teams** | Add multiple AI agents with distinct personalities and skills |
+| 💬 **Real-time Chat** | Watch AI agents discuss and collaborate in real-time |
+| 🧠 **Persistent Memory** | Agents remember conversations and context across sessions |
+| 📎 **File Sharing** | Upload and share files with your AI team |
+| 🎭 **Custom Personalities** | Define agent behavior using SOUL.md files |
+| 🌐 **Multi-language** | Support for English and Chinese |
+| 🔒 **Privacy-First** | All data stored locally, no cloud upload |
+
+---
+
+## 📊 Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Hub (Local or Cloud)                    │
-│     Local: http://localhost:3000  Cloud: open-claw-space.args.fun    │
-│  ┌─────────────────────┐    ┌─────────────────────────────┐ │
-│  │      Hub Web        │    │       Hub Service           │ │
-│  │   (Web Interface)   │◄──►│    (WebSocket Relay)        │ │
-│  │   React + Vite      │    │   Cloudflare Workers        │ │
-│  └─────────────────────┘    └─────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-           ▲                           ▲
-           │                           │
-           │ WebSocket (Browser)       │ WebSocket (Client)
-           │                           │
-           ▼                           ▼
-┌─────────────────────┐         ┌─────────────────────────────┐
-│    User Browser      │         │          Client            │
-│                     │         │     (Local Client)          │
-│   Enter Token       │         │                             │
-│   Join Chat         │         │  npm install -g openclawspace│
-└─────────────────────┘         │  - SQLite Local Storage     │
-                                │  - OpenClaw Gateway         │
-                                │  - 4 AI Bots                │
-                                │  - File Logs (~/.ocs-client)│
-                                └─────────────────────────────┘
+┌─────────────────┐        ┌─────────────────────────┐
+│   Web Browser   │◄──────►│      ocs-hub (Cloud)    │
+│     (User)      │ HTTPS  │   - WebSocket Relay     │
+└─────────────────┘        │   - Static Web UI       │
+                           └────────────┬────────────┘
+                                        │ WebSocket
+┌─────────────────┐        ┌────────────▼────────────┐
+│    OpenClaw     │◄──────►│       ocs-client        │
+│    Gateway      │   WS   │    (Your Machine)       │
+│    (Local)      │        │                         │
+└─────────────────┘        └─────────────────────────┘
 ```
 
-**Deployment Modes**:
-- **Public Hub Mode** (default): `openclawspace` connects to `wss://open-claw-space.args.fun/ws` by default, access at `https://open-claw-space.args.fun`. Recommended for general users.
-- **Local Mode**: Run `./restart.sh` to start all services locally. Access at `http://localhost:3000`. Recommended for local development and users needing complete privacy.
-- **Self-Hosted Mode**: Deploy hub to your own domain, use `--hub` parameter to specify the connection address.
-
-**Core Design Principles**:
-- 🔐 **Token Pairing**: Browser and Client with same Token automatically connect
-- 📍 **Local Data**: All business data stored locally in SQLite, Hub only relays messages
-- 🚀 **No Port Exposure**: Client connects to Hub as WebSocket client
+- **ocs-client**: Local Node.js service managing spaces, members, and messages
+- **ocs-hub**: WebSocket relay server providing the Web UI
+- **OpenClaw Gateway**: AI runtime for agent execution
 
 ---
 
 ## 🎯 Use Cases
 
-### 💼 Startup Teams
-- Rapidly validate product ideas
-- AI team helps write PRDs, technical solutions, test cases
-- 24/7 project advancement
-
-### 👨‍💻 Independent Developers
-- One person becomes a whole team
-- AI handles product, development, testing tasks
-- Focus on core code implementation
-
-### 📚 Learning & Growth
-- Observe how AI teams collaborate
-- Learn product thinking, technical solution design
-- Improve your own teamwork skills
-
-### 🎮 Creative Experiments
-- Create AI teams with different roles
-- Explore possibilities of AI collaboration
-- Build your own AI studio
+- **🚀 Product Teams**: Product manager + Tech lead + Designer collaborating on features
+- **🔬 Research Teams**: Researcher + Analyst + Writer working on reports
+- **💻 Dev Teams**: Architect + Developer + Reviewer discussing implementations
+- **📚 Study Groups**: Multiple AI tutors explaining topics from different angles
 
 ---
 
-## 🛠️ Tech Stack
+## 📚 Documentation
 
-| Component | Technology | Description |
-|-----------|------------|-------------|
-| **Client** | Node.js + TypeScript | Local client, SQLite storage |
-| **Hub Web** | React + Vite | Web interface (local or cloud) |
-| **Hub Service** | Cloudflare Workers | WebSocket relay service |
-| **AI Gateway** | OpenClaw | AI agent management and invocation |
-| **Database** | sql.js | Local SQLite database (pure JavaScript) |
-
----
-
-## 📦 Installation & Usage
-
-OpenClawSpace supports two deployment modes:
-- **Local Mode**: Run `./restart.sh` for a complete local setup (Hub, Client, and Web Interface). Access at `http://localhost:3000`.
-- **Remote Mode**: Install the client globally and connect to a remote hub (public or self-hosted).
-
-### Requirements
-- Node.js >= 18
-- OpenClaw Gateway (AI service)
-
-### Install Client
-
-```bash
-npm install -g openclawspace
-```
-
-### Start Service
-
-```bash
-# Default connection to public hub
-openclawspace
-
-# Or specify custom hub address
-openclawspace --hub ws://your-hub-server:8787/ws
-```
-
-### Custom Configuration
-
-Edit `~/.ocs-client/user-profile.json`:
-
-```json
-{
-  "name": "Founder",
-  "title": "CEO",
-  "description": "The soul of the team, all AI members serve you."
-}
-```
-
----
-
-## 🎭 AI Role Introduction
-
-### Mǎ Liáng (CEO)
-- **Style**: Direct, decisive, results-oriented
-- **Responsibilities**: Strategy formulation, team coordination, progress tracking, key decisions
-- **Characteristics**: Never procrastinates, either executes immediately or clarifies blockers
-
-### Xī Hé (Product Manager)
-- **Style**: Meticulous, logical, user-oriented
-- **Responsibilities**: Requirements analysis, PRD writing, product planning, UX design
-- **Outputs**: PRD documents, user stories, prototype designs
-
-### Lǔ Bān (Programmer)
-- **Style**: Practical, feasibility-focused, identifies technical risks
-- **Responsibilities**: Technical solution design, code implementation, technical challenge resolution, code review
-- **Characteristics**: Evaluates feasibility before committing, raises technical risks promptly
-
-### Luó Zhōu (QA Engineer)
-- **Style**: Rigorous, bug-hunting, edge-case focused
-- **Responsibilities**: Test case design, functional testing, bug tracking, quality reporting
-- **Characteristics**: Leaves no suspicious bug unchecked, thinks from user perspective
-
----
-
-## 📁 Project Structure
-
-```
-openclawspace/
-├── ocs-hub/                    # Cloud Hub
-│   ├── packages/
-│   │   ├── ocs-hub-service/    # Cloudflare Workers (WebSocket relay)
-│   │   └── ocs-hub-web/        # React + Vite (static pages)
-│   └── package.json
-│
-└── ocs-client/                 # Local Client
-    ├── src/
-    │   ├── cli.ts              # CLI entry point
-    │   ├── hub-client.ts       # WebSocket client
-    │   ├── database.ts         # SQLite management
-    │   ├── space-manager.ts    # Space/member/message management
-    │   ├── ai-discussion-controller.ts  # AI auto-discussion controller
-    │   ├── user-profile.ts     # User identity management
-    │   ├── logger.ts           # File logging system
-    │   └── openclaw-client.ts  # OpenClaw Gateway integration
-    ├── package.json
-    └── bin/openclawspace
-```
+- **[Getting Started](docs/GETTING_STARTED.md)** - Installation and first steps
+- **[Architecture](docs/ARCHITECTURE.md)** - System design and components
+- **[API](docs/API.md)** - WebSocket protocol reference
+- **[Deployment](docs/DEPLOYMENT.md)** - Production deployment guide
+- **[Development](docs/DEVELOPMENT.md)** - Contributing guide
+- **[FAQ](docs/FAQ.md)** - Common questions
 
 ---
 
 ## 🤝 Contributing
 
-We welcome all forms of contributions! See [CONTRIBUTING.md](./CONTRIBUTING.md)
-
-### Quick Start
-
-1. Fork this repository
-2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
----
-
-## 📜 Changelog
-
-See [CHANGELOG.md](./CHANGELOG.md)
-
-### Latest Version v1.0.0
-
-- ✨ Initial release
-- 🎭 4 preset AI roles
-- 🔒 Local data storage
-- 🌐 Cloud web interface
-- 🤖 AI automatic discussion
-
----
-
-## 🛡️ Security & Privacy
-
-| Feature | Description |
-|---------|-------------|
-| **Token Security** | Random 12-character alphanumeric, regenerated on restart |
-| **Data Privacy** | All data stored locally, not uploaded to cloud |
-| **Hub Security** | Hub only relays messages, doesn't parse business content |
-| **Local Logs** | Logs stored in `~/.ocs-client/logs/`, not uploaded |
-
----
-
-## 🌟 Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=argszero/openclawspace&type=Date)](https://star-history.com/#argszero/openclawspace&Date)
+We welcome contributions! Please see our [Development Guide](docs/DEVELOPMENT.md) for:
+- Setting up development environment
+- Code style guidelines
+- Submitting pull requests
 
 ---
 
 ## 📄 License
 
-[MIT](./LICENSE) © argszero
+MIT License - see [LICENSE](LICENSE) for details.
 
 ---
 
-## 💬 Community
+## 🌟 Star History
 
-- 💡 Questions? Open an [Issue](https://github.com/argszero/openclawspace/issues)
-- 💬 Want to discuss? Start a [Discussion](https://github.com/argszero/openclawspace/discussions)
-- 🐦 Follow on Twitter: [@argszero](https://twitter.com/argszero)
+If you find OpenClawSpace useful, please consider giving us a star! It helps us grow and improve.
 
----
-
-## 🙏 Acknowledgments
-
-- [OpenClaw](https://github.com/argszero/openclaw) - AI Gateway
-- [Cloudflare](https://workers.cloudflare.com/) - Edge computing platform
-- [React](https://react.dev/) - Frontend framework
-- [sql.js](https://github.com/sql-js/sql.js) - SQLite compiled to JavaScript via Emscripten
+[![Star History Chart](https://api.star-history.com/svg?repos=openclawspace/openclawspace&type=Date)](https://star-history.com/#openclawspace/openclawspace&Date)
 
 ---
 
-<div align="center">
-
-**🐾 OpenClawSpace - Make AI Your Dedicated Team**
-
-[⭐ Star this project](https://github.com/argszero/openclawspace) · [🍴 Fork](https://github.com/argszero/openclawspace/fork) · [📖 Documentation](https://github.com/argszero/openclawspace/wiki)
-
-</div>
+<p align="center">
+  <strong>Built with ❤️ by the OpenClawSpace Team</strong><br>
+  <a href="https://github.com/openclawspace/openclawspace">GitHub</a> •
+  <a href="https://github.com/openclawspace/openclawspace/issues">Issues</a> •
+  <a href="https://github.com/openclawspace/openclawspace/releases">Releases</a>
+</p>

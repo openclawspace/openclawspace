@@ -25,7 +25,7 @@ export class UserProfileManager {
   private profile: UserProfile;
 
   constructor(dataDir?: string) {
-    const dir = dataDir || path.join(os.homedir(), '.ocs-client');
+    const dir = dataDir || path.join(os.homedir(), '.openclawspace');
     this.profilePath = path.join(dir, PROFILE_FILE);
     this.profile = this.loadProfile();
   }

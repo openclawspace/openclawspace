@@ -49,7 +49,7 @@ export class SpaceManager {
     this.gatewayToken = gatewayToken;
     this.gateway = getGatewayClient({ gatewayToken });
     this.userProfile = userProfile || new UserProfileManager();
-    this.publicSpacesDir = path.join(os.homedir(), '.ocs-client', 'spaces');
+    this.publicSpacesDir = path.join(os.homedir(), '.openclawspace', 'spaces');
     this.ensurePublicSpacesDirExists();
     this.setupGatewayListeners();
   }
@@ -193,7 +193,7 @@ export class SpaceManager {
   private createPublicSpaceStructure(spaceId: string): void {
     const spaceRootDir = this.getPublicSpaceDir(spaceId);
 
-    // Create space directory structure: ~/.ocs-client/spaces/{spaceId}/space/
+    // Create space directory structure: ~/.openclawspace/spaces/{spaceId}/space/
     const spaceDir = path.join(spaceRootDir, 'space');
     if (!fs.existsSync(spaceDir)) {
       fs.mkdirSync(spaceDir, { recursive: true });
@@ -939,7 +939,7 @@ When you create a file, other team members can access it immediately.
     // Delete space and all related data from database
     await this.db.deleteSpace(spaceId);
 
-    // Delete public space directory (~/.ocs-client/spaces/{spaceId})
+    // Delete public space directory (~/.openclawspace/spaces/{spaceId})
     try {
       const spaceDir = this.getPublicSpaceDir(spaceId);
       logger.info(`[SpaceManager] Attempting to delete space directory: ${spaceDir}`);

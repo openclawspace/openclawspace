@@ -91,10 +91,10 @@ export class OpenClawClient {
     let agentBaseDir: string;
 
     if (spaceId) {
-      // 使用统一的目录结构：~/.ocs-client/spaces/{spaceId}/agents/{agentId}/
+      // 使用统一的目录结构：~/.openclawspace/spaces/{spaceId}/agents/{agentId}/
       // workspace/: 存储 SOUL.md, BOOTSTRAP.md 等业务文件
       // agent/: 存储 OpenClaw 内部状态 (session, models.json 等)
-      agentBaseDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+      agentBaseDir = path.join(os.homedir(), '.openclawspace', 'spaces', spaceId, 'agents', agentId);
       workspaceDir = path.join(agentBaseDir, 'workspace');
       agentDir = path.join(agentBaseDir, 'agent');
 
@@ -106,8 +106,8 @@ export class OpenClawClient {
         fs.mkdirSync(agentDir, { recursive: true });
       }
 
-      // Create space directory structure: ~/.ocs-client/spaces/{spaceId}/space/
-      const spaceDir = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'space');
+      // Create space directory structure: ~/.openclawspace/spaces/{spaceId}/space/
+      const spaceDir = path.join(os.homedir(), '.openclawspace', 'spaces', spaceId, 'space');
       if (!fs.existsSync(spaceDir)) {
         fs.mkdirSync(spaceDir, { recursive: true });
 
@@ -124,7 +124,7 @@ export class OpenClawClient {
 
       // 在 agent workspace 中创建 space 目录的 symlink，指向空间共享目录
       const spaceLinkPath = path.join(workspaceDir, 'space');
-      const spaceTargetPath = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'space');
+      const spaceTargetPath = path.join(os.homedir(), '.openclawspace', 'spaces', spaceId, 'space');
       try {
         // 如果已存在，先删除
         if (fs.existsSync(spaceLinkPath)) {
@@ -263,21 +263,21 @@ You are fully configured and ready to start working.
     // 删除 ocs-client 创建的目录（使用完整 agentId）
     let agentDirToDelete: string;
     if (spaceId) {
-      agentDirToDelete = path.join(os.homedir(), '.ocs-client', 'spaces', spaceId, 'agents', agentId);
+      agentDirToDelete = path.join(os.homedir(), '.openclawspace', 'spaces', spaceId, 'agents', agentId);
     } else {
       agentDirToDelete = path.join(this.baseDir, 'agents', agentId);
     }
-    console.log(`[OpenClaw] Checking ocs-client agent directory: ${agentDirToDelete}`);
+    console.log(`[OpenClaw] Checking openclawspace agent directory: ${agentDirToDelete}`);
     if (fs.existsSync(agentDirToDelete)) {
       try {
         fs.rmSync(agentDirToDelete, { recursive: true, force: true });
-        console.log(`[OpenClaw] Deleted ocs-client agent directory: ${agentDirToDelete}`);
+        console.log(`[OpenClaw] Deleted openclawspace agent directory: ${agentDirToDelete}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        console.error(`[OpenClaw] Failed to delete ocs-client agent directory: ${errorMessage}`);
+        console.error(`[OpenClaw] Failed to delete openclawspace agent directory: ${errorMessage}`);
       }
     } else {
-      console.log(`[OpenClaw] ocs-client agent directory not found: ${agentDirToDelete}`);
+      console.log(`[OpenClaw] openclawspace agent directory not found: ${agentDirToDelete}`);
     }
   }
 

@@ -8,6 +8,7 @@ export interface Space {
   createdAt: string;
   isPaused: boolean;
   pausedAt?: string;
+  language?: string;
 }
 
 export interface Member {
@@ -77,7 +78,8 @@ export class Database {
         name TEXT NOT NULL,
         created_at TEXT NOT NULL,
         is_paused INTEGER NOT NULL DEFAULT 0,
-        paused_at TEXT
+        paused_at TEXT,
+        language TEXT DEFAULT 'zh'
       )
     `);
 
@@ -148,11 +150,12 @@ export class Database {
   }
 
   // Space operations
-  async createSpace(id: string, name: string): Promise<Space> {
+  async createSpace(id: string, name: string, language?: string): Promise<Space> {
     const createdAt = new Date().toISOString();
-    this.db.run('INSERT INTO spaces (id, name, created_at, is_paused) VALUES (?, ?, ?, ?)', [id, name, createdAt, 0]);
+    const lang = language || 'zh';
+    this.db.run('INSERT INTO spaces (id, name, created_at, is_paused, language) VALUES (?, ?, ?, ?, ?)', [id, name, createdAt, 0, lang]);
     await this.save();
-    return { id, name, createdAt, isPaused: false };
+    return { id, name, createdAt, isPaused: false, language: lang };
   }
 
   getSpace(id: string): Space | null {
@@ -169,7 +172,8 @@ export class Database {
       name: row.name,
       createdAt: row.created_at,
       isPaused: Number(row.is_paused) === 1,
-      pausedAt: row.paused_at || undefined
+      pausedAt: row.paused_at || undefined,
+      language: row.language || 'zh'
     };
   }
 
@@ -183,7 +187,8 @@ export class Database {
         name: row.name,
         createdAt: row.created_at,
         isPaused: Number(row.is_paused) === 1,
-        pausedAt: row.paused_at || undefined
+        pausedAt: row.paused_at || undefined,
+        language: row.language || 'zh'
       });
     }
     stmt.free();
@@ -477,7 +482,15 @@ export class Database {
         await this.save();
       }
 
-      // Check if attachments table exists
+      // Check if language column exists
+      const hasLanguage = columns.some(col => col.name === 'language');
+
+      if (!hasLanguage) {
+        console.log('[Database] Migrating spaces table to add language column...');
+        this.db.run('ALTER TABLE spaces ADD COLUMN language TEXT DEFAULT \'zh\'');
+        console.log('[Database] Language column migration completed successfully');
+        await this.save();
+      }
       const tablesStmt = this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='attachments'");
       const hasAttachments = tablesStmt.step();
       tablesStmt.free();

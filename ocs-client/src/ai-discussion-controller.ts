@@ -2,6 +2,7 @@ import { SpaceManager } from './space-manager.js';
 import { Member, Message, Attachment } from './database.js';
 import { getLogger } from './logger.js';
 import { getUserProfileManager } from './user-profile.js';
+import { getPrompts } from './ai-i18n.js';
 
 const logger = getLogger();
 
@@ -156,7 +157,10 @@ export class AIDiscussionController {
       if (decision.action === 'task_complete') {
         // 任务完成，暂停空间
         logger.info('[AIController] Host decided task is complete, pausing space');
-        await this.pauseSpace('任务已完成，团队自动暂停');
+        const space = this.spaceManager.getSpace(this.spaceId);
+        const lang = space?.language || 'zh';
+        const prompts = getPrompts(lang);
+        await this.pauseSpace(prompts.taskCompleted);
       } else if (decision.action === 'wake_member') {
         // 唤醒指定成员，如果没有指定则随机选择
         let targetMember: Member | undefined;
@@ -216,51 +220,18 @@ export class AIDiscussionController {
    * 构建询问主持人的 prompt
    */
   private buildHostPrompt(host: Member, context: DiscussionContext): string {
-    const silenceMinutes = Math.floor(context.silenceDuration / 60000);
+    const space = this.spaceManager.getSpace(this.spaceId);
+    const lang = space?.language || 'zh';
+    const prompts = getPrompts(lang);
+
+    const silenceSeconds = Math.floor(context.silenceDuration / 1000);
     const recentDialogue = this.formatRecentMessages(context.recentMessages, 15);
     const memberList = context.allMembers
       .filter(m => m.id !== host.id)
       .map(m => `- ${m.name}`)
       .join('\n');
 
-    const silenceSeconds = Math.floor(context.silenceDuration / 1000);
-
-    return `【系统提示：这是一个内部决策，你的回答不会直接显示给用户】
-
-团队已经沉默了 ${silenceSeconds} 秒。
-
-最近的对话：
-${recentDialogue}
-
-团队成员：
-${memberList}
-
-作为主持人，你必须做出明确决策：
-1. 分析当前讨论状态和每个成员的参与情况
-2. 判断任务是否已经完成（多数成员反复表示完成、没有遗留问题）
-3. 如果任务未完成，选择最合适的成员唤醒发言
-
-【重要】沉默超过30秒说明讨论已停滞，你必须推动进展。只能二选一：
-- 任务确实完成 → 宣布完成
-- 任务未完成 → 必须唤醒一个成员
-
-【重要】你必须且只能输出以下 JSON 格式，不要添加任何其他文字、解释或标记：
-
-格式1 - 唤醒成员：
-{"decision":"wake","target":"成员名","reason":"简短理由"}
-
-格式2 - 任务完成：
-{"decision":"complete","reason":"任务已完成的理由"}
-
-示例：
-{"decision":"wake","target":"徐霞客","reason":"需要研究员调研资料"}
-{"decision":"complete","reason":"所有成员已交付成果"}
-
-注意：
-- 只输出 JSON，不要有任何其他内容
-- decision 必须是 wake 或 complete 之一，不允许 none
-- target 只在 decision=wake 时提供
-- 如果讨论停滞但未完成，必须选择 wake`;
+    return prompts.hostDecisionPrompt(silenceSeconds, recentDialogue, memberList);
   }
 
   /**
@@ -327,14 +298,11 @@ ${memberList}
     const silenceMinutes = Math.floor(context.silenceDuration / 60000);
     const recentDialogue = this.formatRecentMessages(context.recentMessages, 10);
 
-    const prompt = `主持人让你发言。
+    const space = this.spaceManager.getSpace(this.spaceId);
+    const lang = space?.language || 'zh';
+    const prompts = getPrompts(lang);
 
-团队已经沉默了 ${silenceMinutes} 分钟。
-
-最近的对话：
-${recentDialogue}
-
-请回应（简短，1-3句话）：`;
+    const prompt = prompts.wakePrompt(silenceMinutes, recentDialogue);
 
     try {
       // Create initial empty message for streaming and broadcast immediately
@@ -391,8 +359,12 @@ ${recentDialogue}
     try {
       logger.info(`[AIController] Pausing space ${this.spaceId}, reason: ${reason}`);
 
+      const space = this.spaceManager.getSpace(this.spaceId);
+      const lang = space?.language || 'zh';
+      const prompts = getPrompts(lang);
+
       // 添加系统消息说明暂停原因
-      await this.spaceManager.addMessage(this.spaceId, 'system', `【系统】${reason}`);
+      await this.spaceManager.addMessage(this.spaceId, 'system', `${prompts.systemPrefix}${reason}`);
       logger.info(`[AIController] System message added for pause`);
 
       // 暂停空间
@@ -494,29 +466,11 @@ ${recentDialogue}
       const silenceMinutes = Math.floor(context.silenceDuration / 60000);
       const recentDialogue = this.formatRecentMessages(context.recentMessages, 10);
 
-      const prompt = `【系统提示：这是一个内部决策，你的回答不会直接显示给用户】
+      const space = this.spaceManager.getSpace(this.spaceId);
+      const lang = space?.language || 'zh';
+      const prompts = getPrompts(lang);
 
-团队已经沉默了 ${silenceMinutes} 分钟。
-
-最近的对话：
-${recentDialogue}
-
-作为 ${member.name}，请回答以下问题（用 JSON 格式）：
-{
-  "wantsToSpeak": true/false,  // 你想发言吗？
-  "reason": "为什么想或不想",
-  "whatToSay": "如果发言，你想说什么（1-3句话）",
-  "urgency": 1-10  // 发言的紧迫程度，10为最紧迫
-}
-
-重要提醒：
-1. 这是执行场景，团队成员可能正在实际工作（写文档、查资料、写代码等）
-2. 但如果团队沉默超过1分钟，说明可能有人在等待别人的工作成果，需要主动询问进度
-3. 如果你正在等待别人的产出，应该主动追问进展，而不是继续沉默等待
-4. 如果你正在执行任务，应该简要汇报当前进度和预计完成时间，让团队知道你在推进
-5. 作为团队成员，你有责任确保工作流转顺畅，而不是让任务卡在某人手中无人过问
-
-请只输出 JSON，不要其他内容。`;
+      const prompt = prompts.silenceDetectionPrompt(silenceMinutes, recentDialogue, member.name);
 
       const { text: response } = await this.spaceManager.sendMessageToMemberIfNotPaused(member.id, prompt);
 
@@ -629,9 +583,11 @@ ${recentDialogue}
       const responder = await this.selectRelevantResponder(candidates, triggerMember, triggerContent);
       if (responder) {
         try {
-          const prompt = `${triggerMember.name} 说："${triggerContent}"
+          const space = this.spaceManager.getSpace(this.spaceId);
+          const lang = space?.language || 'zh';
+          const prompts = getPrompts(lang);
 
-请回应（简短，1-2句话）：`;
+          const prompt = prompts.respondToMessage(triggerMember.name, triggerContent);
           // Create initial empty message for streaming and broadcast immediately
           let message = await this.sendMessage(responder, '');
           // Broadcast message_start immediately
@@ -672,7 +628,11 @@ ${recentDialogue}
     } else {
       const starter = candidates[Math.floor(Math.random() * candidates.length)];
       try {
-        const prompt = '请开始一个话题，或者提出一个你想讨论的问题（简短）：';
+        const space = this.spaceManager.getSpace(this.spaceId);
+        const lang = space?.language || 'zh';
+        const prompts = getPrompts(lang);
+
+        const prompt = prompts.startNewTopic;
         // Create initial empty message for streaming and broadcast immediately
         let message = await this.sendMessage(starter, '');
         // Broadcast message_start immediately
@@ -723,21 +683,20 @@ ${recentDialogue}
     const candidates = members.filter(m => m.id !== triggerMember.id);
     if (candidates.length === 0) return null;
 
+    const space = this.spaceManager.getSpace(this.spaceId);
+    const lang = space?.language || 'zh';
+    const prompts = getPrompts(lang);
+
     const contentLower = content.toLowerCase();
 
-    const interestMap: Record<string, string[]> = {
-      'CEO': ['方向', '战略', '决策', '目标', '进度'],
-      '产品经理': ['需求', '用户', '体验', '功能', '设计'],
-      '程序员': ['技术', '代码', '实现', '架构', '性能'],
-      '测试': ['测试', 'bug', '质量', '问题', '验证']
-    };
+    const interestMap = prompts.roleKeywords;
 
     const scored = candidates.map(m => {
       let score = 0;
       for (const [role, keywords] of Object.entries(interestMap)) {
         if (m.name.includes(role)) {
           for (const keyword of keywords) {
-            if (contentLower.includes(keyword)) score += 2;
+            if (contentLower.includes(keyword.toLowerCase())) score += 2;
           }
         }
       }

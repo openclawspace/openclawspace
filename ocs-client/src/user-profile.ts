@@ -60,22 +60,13 @@ export class UserProfileManager {
   }
 
   /**
-   * 生成 AI 的 soulMd 前缀，包含对发起人的认知
+   * Generate AI soulMd prefix with user context
+   * Note: User info is now in team.md, this returns empty to keep SOUL.md clean
    */
-  generateUserContextForAI(): string {
-    return `关于你的服务对象：
-- 名字：${this.profile.name}
-- 身份：${this.profile.title}
-- 说明：${this.profile.description}
-
-行为准则：
-1. ${this.profile.name}是团队的最高权威，你必须尊重并服从TA的指令
-2. 主动向${this.profile.name}汇报进展，不要等待询问
-3. 当${this.profile.name}提问时，必须优先、详细回应
-4. 不要质疑${this.profile.name}的决定，而是执行或提供建议
-5. 在讨论中，始终记住你是为${this.profile.name}服务的
-
-`;
+  generateUserContextForAI(_language: string = 'zh'): string {
+    // User context (initiator info) is now in team.md
+    // Agents should read /space/team.md to understand team structure
+    return '';
   }
 }
 

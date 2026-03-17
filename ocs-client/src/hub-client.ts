@@ -212,7 +212,8 @@ export class HubClient {
     logger.info(`[HubClient] Creating space with payload: ${JSON.stringify(payload)}`);
     const name = payload?.name || '未命名空间';
     const customMembers = payload?.members;
-    logger.info(`[HubClient] Creating space "${name}" with ${customMembers?.length || 0} custom members`);
+    const language = payload?.language || 'zh';
+    logger.info(`[HubClient] Creating space "${name}" with ${customMembers?.length || 0} custom members, language: ${language}`);
 
     // Set up progress callback to send real-time updates to browser
     this.spaceManager.onProgress = (message: string) => {
@@ -222,7 +223,7 @@ export class HubClient {
       });
     };
 
-    const { space, members } = await this.spaceManager.createSpace(name, customMembers);
+    const { space, members } = await this.spaceManager.createSpace(name, customMembers, language);
     logger.info(`[HubClient] Space created: ${space.id} with ${members.length} members`);
 
     // Clear progress callback
@@ -439,13 +440,18 @@ export class HubClient {
     }
 
     try {
-      const member = await this.spaceManager.addMember(spaceId, name, soulMd, identityMd);
+      const { member, systemMessage } = await this.spaceManager.addMember(spaceId, name, soulMd, identityMd);
       this.send({
         type: 'member_added',
         payload: { member }
       });
       // Refresh members list
       this.sendMembersData(spaceId);
+
+      // Send system message about new member
+      if (systemMessage) {
+        await this.broadcastSystemMessage(spaceId, systemMessage);
+      }
 
       // Notify AI controller of new member
       const controller = this.aiControllers.get(spaceId);
@@ -511,13 +517,18 @@ export class HubClient {
     const spaceId = member.spaceId;
 
     try {
-      await this.spaceManager.removeMember(memberId);
+      const { systemMessage } = await this.spaceManager.removeMember(memberId);
       this.send({
         type: 'member_removed',
         payload: { memberId }
       });
       // Refresh members list
       this.sendMembersData(spaceId);
+
+      // Send system message about member removal
+      if (systemMessage) {
+        await this.broadcastSystemMessage(spaceId, systemMessage);
+      }
 
       // Notify AI controller of member removal
       const controller = this.aiControllers.get(spaceId);
@@ -607,6 +618,35 @@ export class HubClient {
         type: 'error',
         payload: { error: `Failed to resume space: ${error.message}` }
       });
+    }
+  }
+
+  /**
+   * Broadcast a system message to all members in a space
+   * Used for team changes (member joined/left)
+   */
+  private async broadcastSystemMessage(spaceId: string, content: string): Promise<void> {
+    try {
+      const userProfile = getUserProfileManager();
+      const senderName = userProfile.getName();
+
+      // Add message to database as system message
+      const message = await this.spaceManager.addMessage(spaceId, 'system', content);
+
+      // Broadcast to all connected browsers
+      this.send({
+        type: 'system_message',
+        payload: {
+          message: {
+            ...message,
+            senderName
+          }
+        }
+      });
+
+      logger.info(`[HubClient] Broadcast system message to space ${spaceId}: ${content}`);
+    } catch (error: any) {
+      logger.error(`[HubClient] Failed to broadcast system message: ${error}`);
     }
   }
 

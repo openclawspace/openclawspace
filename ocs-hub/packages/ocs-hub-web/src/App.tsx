@@ -679,7 +679,7 @@ function SpaceListPage({
     const membersToCreate = customMembers.filter((_, index) => customMembers[index]?.isBuiltIn || selectedMembers.has(index))
     sendMessage({
       type: 'create_space',
-      payload: { name: newSpaceName, members: membersToCreate }
+      payload: { name: newSpaceName, members: membersToCreate, language: i18n.language || 'zh' }
     })
   }
 
@@ -1121,8 +1121,12 @@ function ChatPage({
   // Track if user is at bottom (viewing latest messages)
   const [isAtBottom, setIsAtBottom] = useState(true)
 
-  // Check if user is at bottom when scrolling
-  const handleScrollForBottomCheck = useCallback(() => {
+  // Track when older messages are loaded
+  const [lastOlderMessagesRequestId, setLastOlderMessagesRequestId] = useState<string>('')
+  const [olderMessagesReceived, setOlderMessagesReceived] = useState<number>(0)
+
+  // Combined scroll handler: checks bottom position and loads older messages
+  const handleScroll = useCallback(() => {
     if (!messagesContainerRef.current) return
 
     const container = messagesContainerRef.current
@@ -1133,70 +1137,9 @@ function ChatPage({
     // Check if scrolled to bottom (within 50px)
     const atBottom = scrollHeight - scrollTop - clientHeight < 50
     setIsAtBottom(atBottom)
-  }, [])
 
-  // Add scroll listener for bottom detection
-  useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
-
-    container.addEventListener('scroll', handleScrollForBottomCheck)
-    return () => {
-      container.removeEventListener('scroll', handleScrollForBottomCheck)
-    }
-  }, [handleScrollForBottomCheck])
-
-  // Scroll to bottom when messages change, but only if user is at bottom
-  // and not when loading older messages
-  useEffect(() => {
-    if (isAtBottom && !isLoadingOlderMessages) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-    }
-  }, [messages, isLoadingOlderMessages, isAtBottom])
-
-  // Track when older messages are loaded
-  const [lastOlderMessagesRequestId, setLastOlderMessagesRequestId] = useState<string>('')
-  const [olderMessagesReceived, setOlderMessagesReceived] = useState<number>(0)
-
-  // Initialize olderMessagesReceived when messages are first loaded
-  useEffect(() => {
-    if (messages.length > 0 && olderMessagesReceived === 0) {
-      setOlderMessagesReceived(messages.length)
-    }
-  }, [messages, olderMessagesReceived])
-
-  // Reset loading state when messages change (older messages loaded)
-  useEffect(() => {
-    if (messages.length > 0 && isLoadingOlderMessages) {
-      const currentFirstMessageId = messages[0].id
-
-      // Check if first message changed since we requested older messages
-      if (currentFirstMessageId !== lastOlderMessagesRequestId) {
-        setIsLoadingOlderMessages(false)
-
-        // Count how many older messages we received
-        const newMessageCount = messages.length - olderMessagesReceived
-        if (newMessageCount < 50) {
-          // Got fewer than 50 messages, probably no more
-          setHasMoreMessages(false)
-        }
-
-        setOlderMessagesReceived(messages.length)
-      }
-    }
-  }, [messages, isLoadingOlderMessages, lastOlderMessagesRequestId, olderMessagesReceived])
-
-  // Handle scroll to load older messages
-  const handleScroll = useCallback(() => {
-    if (!messagesContainerRef.current || isLoadingOlderMessages || !hasMoreMessages || messages.length === 0) {
-      return
-    }
-
-    const container = messagesContainerRef.current
-    const scrollTop = container.scrollTop
-
-    // If scrolled near the top (within 100px)
-    if (scrollTop < 100) {
+    // Check if scrolled near the top (within 100px) to load older messages
+    if (scrollTop < 100 && !isLoadingOlderMessages && hasMoreMessages && messages.length > 0) {
       const oldestMessageId = messages[0].id
       const previousScrollHeight = container.scrollHeight
       setIsLoadingOlderMessages(true)
@@ -1234,6 +1177,42 @@ function ChatPage({
       container.removeEventListener('scroll', handleScroll)
     }
   }, [handleScroll])
+
+  // Initialize olderMessagesReceived when messages are first loaded
+  useEffect(() => {
+    if (messages.length > 0 && olderMessagesReceived === 0) {
+      setOlderMessagesReceived(messages.length)
+    }
+  }, [messages, olderMessagesReceived])
+
+  // Reset loading state when messages change (older messages loaded)
+  useEffect(() => {
+    if (messages.length > 0 && isLoadingOlderMessages) {
+      const currentFirstMessageId = messages[0].id
+
+      // Check if first message changed since we requested older messages
+      if (currentFirstMessageId !== lastOlderMessagesRequestId) {
+        setIsLoadingOlderMessages(false)
+
+        // Count how many older messages we received
+        const newMessageCount = messages.length - olderMessagesReceived
+        if (newMessageCount < 50) {
+          // Got fewer than 50 messages, probably no more
+          setHasMoreMessages(false)
+        }
+
+        setOlderMessagesReceived(messages.length)
+      }
+    }
+  }, [messages, isLoadingOlderMessages, lastOlderMessagesRequestId, olderMessagesReceived])
+
+  // Scroll to bottom when messages change, but only if user is at bottom
+  // and not when loading older messages
+  useEffect(() => {
+    if (isAtBottom && !isLoadingOlderMessages) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages, isLoadingOlderMessages, isAtBottom])
 
   const sendChatMessage = async () => {
     if ((!newMessage.trim() && selectedFiles.length === 0) || !spaceId) return

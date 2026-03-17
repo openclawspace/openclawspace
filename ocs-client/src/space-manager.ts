@@ -3,6 +3,7 @@ import { OpenClawClient } from './openclaw-client.js';
 import { GatewayClient, getGatewayClient } from './gateway-client.js';
 import { getLogger } from './logger.js';
 import { UserProfileManager } from './user-profile.js';
+import { compileSoulMd } from './templates/index.js';
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
@@ -192,36 +193,20 @@ export class SpaceManager {
   private createPublicSpaceStructure(spaceId: string): void {
     const spaceRootDir = this.getPublicSpaceDir(spaceId);
 
-    // 创建 space 目录结构：~/.ocs-client/spaces/{spaceId}/space/
+    // Create space directory structure: ~/.ocs-client/spaces/{spaceId}/space/
     const spaceDir = path.join(spaceRootDir, 'space');
     if (!fs.existsSync(spaceDir)) {
       fs.mkdirSync(spaceDir, { recursive: true });
 
-      // 创建 workspace 目录（原 shared 目录）
+      // Create workspace directory (for shared files)
       const workspaceDir = path.join(spaceDir, 'workspace');
       fs.mkdirSync(workspaceDir, { recursive: true });
 
-      // 在 workspace 目录中创建子目录
-      const workspaceSubdirs = ['documents', 'images', 'code', 'data'];
-      for (const subdir of workspaceSubdirs) {
-        const subdirPath = path.join(workspaceDir, subdir);
-        if (!fs.existsSync(subdirPath)) {
-          fs.mkdirSync(subdirPath, { recursive: true });
-        }
-      }
-
-      // 创建 attachments 目录（新增聊天附件目录）
+      // Create attachments directory (for chat attachments)
       const attachmentsDir = path.join(spaceDir, 'attachments');
       fs.mkdirSync(attachmentsDir, { recursive: true });
 
-      // 在 attachments 目录中创建子目录
-      const attachmentsSubdirs = ['images', 'documents', 'media', 'other', 'temp'];
-      for (const subdir of attachmentsSubdirs) {
-        const subdirPath = path.join(attachmentsDir, subdir);
-        if (!fs.existsSync(subdirPath)) {
-          fs.mkdirSync(subdirPath, { recursive: true });
-        }
-      }
+      // Note: Subdirectories are not pre-created; agents create them as needed
 
       // Create a README file explaining the structure
       const readmePath = path.join(spaceDir, 'README.md');
@@ -258,7 +243,86 @@ When you create a file, other team members can access it immediately.
     }
   }
 
-  async createSpace(name: string, customMembers?: Array<{ name: string; soulMd: string; identityMd?: string; isBuiltIn?: boolean; role?: 'host' | 'member' }>): Promise<{ space: Space; members: Member[] }> {
+  /**
+   * Generate team.md content
+   */
+  private generateTeamMd(spaceId: string, members: Member[], language: string = 'zh'): string {
+    const space = this.db.getSpace(spaceId);
+    const spaceName = space?.name || 'Team';
+    const userProfile = this.userProfile.getProfile();
+
+    const isEnglish = language === 'en';
+
+    // Header
+    let content = isEnglish
+      ? `# ${spaceName} - Team Members\n\n`
+      : `# ${spaceName} - 团队成员\n\n`;
+
+    // Initiator section with Code of Conduct
+    if (isEnglish) {
+      content += `## Initiator\n\n`;
+      content += `- **Name:** Initiator\n`;
+      content += `- **Description:** The highest decision-maker of the team, all AI members serve you.\n\n`;
+      content += `### Code of Conduct\n\n`;
+      content += `1. Initiator is the supreme authority; you must respect and obey their instructions\n`;
+      content += `2. Proactively report progress to Initiator, don't wait to be asked\n`;
+      content += `3. When Initiator asks a question, respond promptly and in detail\n`;
+      content += `4. Don't question Initiator's decisions; instead execute or provide suggestions\n\n`;
+    } else {
+      content += `## 发起人\n\n`;
+      content += `- **Name:** ${userProfile.name}\n`;
+      content += `- **Description:** ${userProfile.description}\n\n`;
+      content += `### 行为准则\n\n`;
+      content += `1. ${userProfile.name}是最高权威，你必须尊重并服从TA的指令\n`;
+      content += `2. 主动向${userProfile.name}汇报进展，不要等待询问\n`;
+      content += `3. 当${userProfile.name}提问时，必须优先、详细回应\n`;
+      content += `4. 不要质疑${userProfile.name}的决定，而是执行或提供建议\n\n`;
+    }
+
+    // Host section
+    const host = members.find(m => m.role === 'host');
+    if (host) {
+      content += isEnglish
+        ? `## Host\n\n- **Name:** ${host.name}\n- **Role:** Host\n- **Description:** Team coordinator, decides who speaks next\n\n`
+        : `## 主持人\n\n- **Name：** ${host.name}\n- **Role：** Host\n- **Description：** 团队协调者，决定下一个发言的成员\n\n`;
+    }
+
+    // Members section
+    const regularMembers = members.filter(m => m.role === 'member');
+    if (regularMembers.length > 0) {
+      content += isEnglish
+        ? `## Members\n\n`
+        : `## 成员\n\n`;
+
+      for (const member of regularMembers) {
+        content += isEnglish
+          ? `- **Name:** ${member.name} | **Role:** Member\n`
+          : `- **Name：** ${member.name} | **Role：** Member\n`;
+      }
+      content += `\n`;
+    }
+
+    // Note
+    content += isEnglish
+      ? `---\n\n*This file is automatically updated when team members join or leave.*\n`
+      : `---\n\n*此文件在团队成员加入或离开时自动更新。*\n`;
+
+    return content;
+  }
+
+  /**
+   * Create or update team.md file
+   */
+  private writeTeamMd(spaceId: string, members: Member[], language?: string): void {
+    const spaceDir = path.join(this.publicSpacesDir, spaceId, 'space');
+    const teamMdPath = path.join(spaceDir, 'team.md');
+
+    const content = this.generateTeamMd(spaceId, members, language);
+    fs.writeFileSync(teamMdPath, content, 'utf-8');
+    logger.info(`[SpaceManager] Updated team.md for space ${spaceId}`);
+  }
+
+  async createSpace(name: string, customMembers?: Array<{ name: string; soulMd?: string; roleDefinition?: string; identityMd?: string; isBuiltIn?: boolean; role?: 'host' | 'member' }>, language?: string): Promise<{ space: Space; members: Member[] }> {
     this.reportProgress(`开始创建团队 "${name}"...`);
 
     // Check if openclaw is available
@@ -281,15 +345,11 @@ When you create a file, other team members can access it immediately.
     try {
       // Step 1: Create space first (needed for foreign key constraint)
       this.reportProgress('创建空间数据库...');
-      const space = await this.db.createSpace(spaceId, name);
+      const space = await this.db.createSpace(spaceId, name, language);
 
       // Step 1.5: Create public space directory structure
       this.reportProgress('创建公共空间目录...');
       this.createPublicSpaceStructure(spaceId);
-
-      // Step 2: Create robots with OpenClaw agents
-      // Get user context to inject into AI's soulMd
-      const userContext = this.userProfile.generateUserContextForAI();
 
       // Step 2: Create robots with OpenClaw agents
       this.reportProgress('开始初始化 AI 成员...');
@@ -299,25 +359,39 @@ When you create a file, other team members can access it immediately.
 
         const memberId = this.generateId();
 
-        // Replace {spaceId} placeholder with actual space ID in soulMd
-        const soulMdWithPath = robot.soulMd.replace(/\{spaceId\}/g, spaceId);
+        // Determine the soulMd content
+        let memberSoulMd: string;
+        if (robot.roleDefinition) {
+          // Use new template system with roleDefinition
+          memberSoulMd = compileSoulMd(robot.roleDefinition, language);
+        } else if (robot.soulMd) {
+          // Fallback to legacy soulMd format
+          memberSoulMd = robot.soulMd;
+        } else {
+          throw new Error(`Member ${robot.name} must have either roleDefinition or soulMd`);
+        }
 
-        // Combine user context with robot's soulMd
-        const fullSoulMd = userContext + soulMdWithPath;
+        // Replace {spaceId} placeholder with actual space ID in soulMd
+        const soulMdWithPath = memberSoulMd.replace(/\{spaceId\}/g, spaceId);
 
         // Prepare identityMd with fallback
         const identityMd = robot.identityMd || `- **Name:** ${robot.name}\n- **Creature:** AI Assistant\n`;
 
-        // Create OpenClaw agent with spaceId to use public space directory as workspace
-        const agent = await this.openclaw.createAgent(robot.name, fullSoulMd, identityMd, spaceId);
+        // Create OpenClaw agent with spaceId to use public space directory as workspace, pass language
+        const agent = await this.openclaw.createAgent(robot.name, soulMdWithPath, identityMd, spaceId, language);
         createdAgents.push(agent);
 
         // Store member with actual OpenClaw agent ID
-        const member = await this.db.createMember(memberId, spaceId, robot.name, robot.soulMd, agent.id, robot.isBuiltIn, robot.role, robot.identityMd);
+        const member = await this.db.createMember(memberId, spaceId, robot.name, memberSoulMd, agent.id, robot.isBuiltIn, robot.role, robot.identityMd);
         createdMembers.push(member);
       }
 
       this.reportProgress('团队创建完成！');
+
+      // Step 4: Create team.md with current members
+      this.reportProgress('创建团队信息文件...');
+      this.writeTeamMd(spaceId, createdMembers, language);
+
       return { space, members: createdMembers };
     } catch (error) {
       this.reportProgress(`创建失败: ${error}`);
@@ -883,8 +957,9 @@ When you create a file, other team members can access it immediately.
 
   /**
    * Add a new member to a space
+   * Returns the new member and an optional system message to broadcast
    */
-  async addMember(spaceId: string, name: string, soulMd: string, identityMd?: string): Promise<Member> {
+  async addMember(spaceId: string, name: string, soulMd: string, identityMd?: string): Promise<{ member: Member; systemMessage?: string }> {
     // Check if openclaw is available
     const isAvailable = await this.openclaw.checkOpenClaw();
     if (!isAvailable) {
@@ -896,13 +971,27 @@ When you create a file, other team members can access it immediately.
     // Prepare identityMd with fallback
     const fullIdentityMd = identityMd || `- **Name:** ${name}\n- **Creature:** AI Assistant\n`;
 
-    // Create OpenClaw agent with spaceId to use public space directory as workspace
-    const agent = await this.openclaw.createAgent(name, soulMd, fullIdentityMd, spaceId);
+    // Get space to determine language
+    const space = this.db.getSpace(spaceId);
+    const language = space?.language || 'zh';
+
+    // Create OpenClaw agent with spaceId to use public space directory as workspace, pass language
+    const agent = await this.openclaw.createAgent(name, soulMd, fullIdentityMd, spaceId, language);
 
     try {
       // Store member with actual OpenClaw agent ID
       const member = await this.db.createMember(memberId, spaceId, name, soulMd, agent.id, false, 'member', identityMd);
-      return member;
+
+      // Update team.md with new member
+      const members = this.db.getMembersBySpace(spaceId);
+      this.writeTeamMd(spaceId, members, language);
+
+      // Generate system message
+      const systemMessage = language === 'en'
+        ? `${name} has joined the team.`
+        : `${name} 加入了团队。`;
+
+      return { member, systemMessage };
     } catch (error) {
       // Rollback: delete agent if database operation fails
       try {
@@ -934,8 +1023,12 @@ When you create a file, other team members can access it immediately.
     // Prepare identityMd with fallback
     const fullIdentityMd = identityMd || `- **Name:** ${name}\n- **Creature:** AI Assistant\n`;
 
-    // Create new agent with updated info, using the same spaceId
-    const newAgent = await this.openclaw.createAgent(name, soulMd, fullIdentityMd, member.spaceId);
+    // Get space to determine language
+    const space = this.db.getSpace(member.spaceId);
+    const language = space?.language || 'zh';
+
+    // Create new agent with updated info, using the same spaceId, pass language
+    const newAgent = await this.openclaw.createAgent(name, soulMd, fullIdentityMd, member.spaceId, language);
 
     try {
       // Delete old member record
@@ -956,12 +1049,20 @@ When you create a file, other team members can access it immediately.
 
   /**
    * Remove a member from a space
+   * Returns the name of removed member for system message
    */
-  async removeMember(memberId: string): Promise<void> {
+  async removeMember(memberId: string): Promise<{ memberName: string; systemMessage?: string }> {
     const member = this.db.getMember(memberId);
     if (!member) {
       throw new Error(`Member not found: ${memberId}`);
     }
+
+    const memberName = member.name;
+    const spaceId = member.spaceId;
+
+    // Get space to determine language before deletion
+    const space = this.db.getSpace(spaceId);
+    const language = space?.language || 'zh';
 
     // Delete OpenClaw agent
     try {
@@ -973,6 +1074,17 @@ When you create a file, other team members can access it immediately.
 
     // Delete member from database
     await this.db.deleteMember(memberId);
+
+    // Update team.md after member removal
+    const members = this.db.getMembersBySpace(spaceId);
+    this.writeTeamMd(spaceId, members, language);
+
+    // Generate system message
+    const systemMessage = language === 'en'
+      ? `${memberName} has left the team.`
+      : `${memberName} 离开了团队。`;
+
+    return { memberName, systemMessage };
   }
 
   /**

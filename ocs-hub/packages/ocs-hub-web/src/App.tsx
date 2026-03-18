@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
-import { BrowserRouter, Routes, Route, useParams, useNavigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, useParams, useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useTranslation } from 'react-i18next'
@@ -178,7 +178,7 @@ function useDefaultSoulMdTemplate(): string {
 
 // Global state for WebSocket connection
 function useGlobalState() {
-  const [token, setToken] = useState('')
+  const [token, setTokenState] = useState('')
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle')
   const [error, setError] = useState('')
   const [space, setSpace] = useState<Space | null>(null)
@@ -189,6 +189,20 @@ function useGlobalState() {
   const [teamTemplates, setTeamTemplates] = useState<TeamTemplate[]>([])
   const [toolStatuses, setToolStatuses] = useState<Record<string, ToolStatus[]>>({}) // messageId -> ToolStatus[]
   const wsRef = useRef<WebSocket | null>(null)
+
+  // Message handlers registry - supports multiple handlers
+  const messageHandlersRef = useRef<((message: HubMessage) => void)[]>([])
+
+  // Helper to add a message handler
+  const addMessageHandler = useCallback((handler: (message: HubMessage) => void) => {
+    messageHandlersRef.current.push(handler)
+    return () => {
+      const index = messageHandlersRef.current.indexOf(handler)
+      if (index > -1) {
+        messageHandlersRef.current.splice(index, 1)
+      }
+    }
+  }, [])
 
   const disconnect = useCallback(() => {
     if (wsRef.current) {
@@ -204,8 +218,76 @@ function useGlobalState() {
     setToolStatuses({})
   }, [])
 
+  // Connect function
+  const connect = useCallback((tokenToUse: string) => {
+    console.log('[GlobalState Connect] Token:', tokenToUse ? `${tokenToUse.substring(0, 8)}...` : 'empty')
+
+    if (!tokenToUse.trim()) {
+      setError('Token is required')
+      return
+    }
+
+    // Close existing connection
+    if (wsRef.current) {
+      console.log('[GlobalState Connect] Closing existing connection')
+      wsRef.current.close()
+    }
+
+    setConnectionStatus('connecting')
+    setError('')
+
+    // Save token to localStorage
+    localStorage.setItem(STORAGE_KEY, tokenToUse)
+    setTokenState(tokenToUse)
+
+    const wsUrl = `${DEFAULT_HUB_URL}?token=${encodeURIComponent(tokenToUse)}&clientType=browser`
+    const ws = new WebSocket(wsUrl)
+
+    ws.onopen = () => {
+      console.log('[WebSocket] Connected')
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const message: HubMessage = JSON.parse(event.data)
+        // Call all registered handlers
+        messageHandlersRef.current.forEach(handler => handler(message))
+      } catch (err) {
+        console.error('Failed to parse message:', err)
+      }
+    }
+
+    ws.onclose = (event) => {
+      console.log('[WebSocket] Closed', event.code, event.reason)
+      setConnectionStatus('error')
+      setError('Connection failed')
+    }
+
+    ws.onerror = (err) => {
+      console.error('[WebSocket] Error:', err)
+      setConnectionStatus('error')
+      setError('Connection failed')
+    }
+
+    wsRef.current = ws
+  }, [])
+
+  // Auto-connect on mount if token exists
+  useEffect(() => {
+    const savedToken = localStorage.getItem(STORAGE_KEY)
+    console.log('[AutoConnect] Saved token:', savedToken ? `${savedToken.substring(0, 8)}...` : 'none', 'Current status:', connectionStatus)
+
+    if (savedToken && connectionStatus === 'idle') {
+      console.log('[AutoConnect] Auto-connecting with saved token')
+      connect(savedToken)
+    }
+  }, [connectionStatus, connect])
+
   return {
-    token, setToken,
+    token, setToken: (t: string) => {
+      setTokenState(t)
+      if (t) localStorage.setItem(STORAGE_KEY, t)
+    },
     connectionStatus, setConnectionStatus,
     error, setError,
     space, setSpace: setSpace as (s: Space | null | ((prev: Space | null) => Space | null)) => void,
@@ -216,331 +298,45 @@ function useGlobalState() {
     teamTemplates, setTeamTemplates: setTeamTemplates as (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void,
     toolStatuses, setToolStatuses,
     wsRef,
-    disconnect
+    disconnect,
+    connect,
+    addMessageHandler
   }
 }
 
 // Token Input Page
 function TokenPage({
-  setToken,
   inputToken,
   setInputToken,
   connectionStatus,
-  setConnectionStatus,
   error,
-  setError,
-  wsRef,
-  setSpaces,
-  setMembers,
-  setMessages,
-  space,
-  setSpace,
-  setCreationProgress,
-  setTeamTemplates,
-  setToolStatuses
+  connect
 }: {
-  setToken: (t: string) => void
   inputToken: string
   setInputToken: (t: string) => void
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
-  setConnectionStatus: (s: 'idle' | 'connecting' | 'connected' | 'error') => void
   error: string
-  setError: (e: string) => void
-  wsRef: React.RefObject<WebSocket | null>
-  setSpaces: (s: Space[] | ((prev: Space[]) => Space[])) => void
-  setMembers: (m: Member[] | ((prev: Member[]) => Member[])) => void
-  setMessages: (m: Message[] | ((prev: Message[]) => Message[])) => void
-  space: Space | null
-  setSpace: (s: Space | null | ((prev: Space | null) => Space | null)) => void
-  setCreationProgress: (p: string) => void
-  setTeamTemplates: (t: TeamTemplate[] | ((prev: TeamTemplate[]) => TeamTemplate[])) => void
-  setToolStatuses: (t: Record<string, ToolStatus[]> | ((prev: Record<string, ToolStatus[]>) => Record<string, ToolStatus[]>)) => void
+  connect: (token: string) => void
 }) {
   const { t } = useTranslation('common');
   const navigate = useNavigate()
-  const location = useLocation()
-
-  const handleMessage = useCallback((message: HubMessage) => {
-    console.log('[Message]', message.type, message.payload)
-
-    switch (message.type) {
-      case 'connected':
-        setConnectionStatus('connecting')
-        break
-
-      case 'paired':
-        setConnectionStatus('connected')
-        // Request templates from backend
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({ type: 'get_templates' }))
-        }
-        // Only navigate to spaces list if we're on the token page
-        // This allows refreshing on chat page to stay on chat page
-        if (location.pathname === '/') {
-          navigate('/spaces')
-        }
-        break
-
-      case 'templates_data':
-        setTeamTemplates(message.payload?.templates || [])
-        break
-
-      case 'space_data':
-        const spaceData = message.payload?.space
-        if (spaceData) {
-          setSpace(spaceData)
-          // Only navigate if we're on the token page, otherwise stay on current page
-          if (location.pathname === '/') {
-            navigate(`/spaces/${spaceData.id}/chat`)
-          }
-        } else if (location.pathname === '/') {
-          navigate('/spaces')
-        }
-        break
-
-      case 'all_spaces_data':
-        setSpaces(message.payload?.spaces || [])
-        break
-
-      case 'space_deleted':
-        const deletedSpaceId = message.payload?.spaceId
-        setSpaces((prev: Space[]) => prev.filter((s: Space) => s.id !== deletedSpaceId))
-        // If the deleted space is the current space, clear the state
-        if (space?.id === deletedSpaceId) {
-          setSpace(null)
-          setMembers([])
-          setMessages([])
-        }
-        break
-
-      case 'space_created':
-        const { space: newSpace, members: newMembers } = message.payload
-        setSpace(newSpace)
-        setMembers(newMembers)
-        setMessages([]) // Clear messages from previous space
-        setCreationProgress('') // Clear progress
-        // Always navigate to the new space's chat page
-        navigate(`/spaces/${newSpace.id}/chat`)
-        break
-
-      case 'space_creation_progress':
-        setCreationProgress(message.payload?.message || '')
-        break
-
-      case 'members_data':
-        setMembers(message.payload?.members || [])
-        break
-
-      case 'messages_data':
-        setMessages(message.payload?.messages || [])
-        break
-
-      case 'older_messages_data':
-        const olderMessages = message.payload?.messages || []
-        if (olderMessages.length > 0) {
-          setMessages((prev: Message[]) => {
-            // Create a Set of existing message IDs for fast lookup
-            const existingIds = new Set(prev.map((msg: Message) => msg.id))
-            // Filter out messages that already exist
-            const newMessages = olderMessages.filter((msg: Message) => !existingIds.has(msg.id))
-            // If no new messages, return previous state
-            if (newMessages.length === 0) {
-              return prev
-            }
-            // Combine new messages with existing ones
-            return [...newMessages, ...prev]
-          })
-        }
-        // If we get fewer than 50 messages, there are no more older messages
-        // We'll update a flag or state to indicate this
-        // For now, ChatPage will handle this by checking if messages were actually added
-        break
-
-      case 'message_start':
-        const startMsg = message.payload?.message
-        if (startMsg) {
-          setMessages((prev: Message[]) => {
-            // Check if message already exists (prevent duplicates)
-            if (prev.some(m => m.id === startMsg.id)) {
-              console.log(`[App] Message ${startMsg.id} already exists, skipping`)
-              return prev
-            }
-            console.log(`[App] Adding message_start: ${startMsg.id}`)
-            return [...prev, startMsg]
-          })
-        }
-        break
-
-      case 'message_update':
-        const updateMsg = message.payload?.message
-        if (updateMsg) {
-          setMessages((prev: Message[]) => {
-            const existingIndex = prev.findIndex(m => m.id === updateMsg.id)
-            if (existingIndex >= 0) {
-              // Update existing message
-              console.log(`[App] Updating message ${updateMsg.id}, isStreaming: ${updateMsg.isStreaming}`)
-              const updated = [...prev]
-              updated[existingIndex] = updateMsg
-              return updated
-            } else {
-              // Message not found, add it (for user messages or missed starts)
-              console.log(`[App] Message ${updateMsg.id} not found, adding as new`)
-              return [...prev, updateMsg]
-            }
-          })
-        }
-        break
-
-      case 'space_paused':
-        const { spaceId: pausedSpaceId, isPaused: pausedIsPaused, pausedAt } = message.payload || {}
-        if (pausedSpaceId) {
-          // Update the space in spaces list
-          setSpaces((prev: Space[]) =>
-            prev.map(s =>
-              s.id === pausedSpaceId
-                ? { ...s, isPaused: pausedIsPaused, pausedAt }
-                : s
-            )
-          )
-          // If this is the current space, update current space state
-          if (space?.id === pausedSpaceId) {
-            setSpace((prev: Space | null) => prev ? { ...prev, isPaused: pausedIsPaused, pausedAt } : null)
-          }
-          // Show notification
-          alert(t('chat.spacePausedAlert'))
-        }
-        break
-
-      case 'space_resumed':
-        const { spaceId: resumedSpaceId, isPaused: resumedIsPaused } = message.payload || {}
-        if (resumedSpaceId) {
-          // Update the space in spaces list
-          setSpaces((prev: Space[]) =>
-            prev.map(s =>
-              s.id === resumedSpaceId
-                ? { ...s, isPaused: resumedIsPaused, pausedAt: undefined }
-                : s
-            )
-          )
-          // If this is the current space, update current space state
-          if (space?.id === resumedSpaceId) {
-            setSpace((prev: Space | null) => prev ? { ...prev, isPaused: resumedIsPaused, pausedAt: undefined } : null)
-          }
-          // Show notification
-          alert(t('chat.spaceResumedAlert'))
-        }
-        break
-
-      case 'tool_status_update':
-        const { messageId: toolMessageId, toolStatuses: newToolStatuses } = message.payload || {}
-        if (toolMessageId && newToolStatuses) {
-          setToolStatuses((prev: Record<string, ToolStatus[]>) => ({
-            ...prev,
-            [toolMessageId]: newToolStatuses
-          }))
-        }
-        break
-
-      case 'error':
-        setError(message.payload?.error || t('errors.unknownError'))
-        break
-    }
-  }, [navigate, setConnectionStatus, setError, setMembers, setMessages, setSpace, setSpaces, setToolStatuses, space])
-
-  const connect = useCallback((tokenToUse?: string) => {
-    console.log('[Connect] tokenToUse type:', typeof tokenToUse, 'value:', tokenToUse)
-    console.log('[Connect] inputToken type:', typeof inputToken, 'value:', inputToken)
-    const token = typeof tokenToUse === 'string' ? tokenToUse : inputToken
-    console.log('[Connect] Final token type:', typeof token, 'value:', token)
-    console.log('[Connect] Attempting to connect with token:', token ? `${token.substring(0, 8)}...` : 'empty')
-    if (!token.trim()) {
-      setError(t('errors.tokenRequired'))
-      return
-    }
-
-    // Close existing connection
-    if (wsRef.current) {
-      console.log('[Connect] Closing existing connection')
-      wsRef.current.close()
-    }
-
-    setConnectionStatus('connecting')
-    setError('')
-    console.log('[Connect] Connecting to WebSocket...')
-
-    // Save token immediately before connecting, so it's available even if connection fails
-    localStorage.setItem(STORAGE_KEY, token)
-    console.log('[Connect] Token saved to localStorage:', token.substring(0, 8) + '...')
-
-    const wsUrl = `${DEFAULT_HUB_URL}?token=${encodeURIComponent(token)}&clientType=browser`
-    const ws = new WebSocket(wsUrl)
-
-    ws.onopen = () => {
-      console.log('[WebSocket] Connected')
-    }
-
-    ws.onmessage = (event) => {
-      try {
-        const message: HubMessage = JSON.parse(event.data)
-        handleMessage(message)
-      } catch (err) {
-        console.error('Failed to parse message:', err)
-      }
-    }
-
-    ws.onclose = (event) => {
-      console.log('[WebSocket] Closed', event.code, event.reason)
-      setConnectionStatus('error')
-      setError(t('errors.connectionFailed'))
-    }
-
-    ws.onerror = (err) => {
-      console.error('[WebSocket] Error:', err)
-      setConnectionStatus('error')
-      setError(t('errors.connectionFailed'))
-    }
-
-    wsRef.current = ws
-    setToken(token)
-  }, [inputToken, handleMessage, setConnectionStatus, setError, setToken, wsRef])
 
   const handleConnectClick = useCallback(() => {
-    connect()
-  }, [connect])
-
-  // Auto-connect when token is loaded
-  useEffect(() => {
-    console.log('[AutoConnect] Effect triggered. Current connectionStatus:', connectionStatus)
-    const savedToken = localStorage.getItem(STORAGE_KEY)
-    console.log('[AutoConnect] Saved token from localStorage:', savedToken ? `${savedToken.substring(0, 8)}...` : 'none')
-    if (savedToken && connectionStatus === 'idle') {
-      console.log('[AutoConnect] Auto-connecting with saved token:', savedToken.substring(0, 8) + '...')
-      // Set the input token and connect with the saved token
-      setInputToken(savedToken)
-      const timer = setTimeout(() => {
-        connect(savedToken)
-      }, 100)
-      return () => clearTimeout(timer)
-    } else if (!savedToken) {
-      console.log('[AutoConnect] No saved token found in localStorage')
-    } else {
-      console.log('[AutoConnect] Not auto-connecting. Status:', connectionStatus)
-    }
-  }, [connectionStatus, connect, setInputToken])
+    connect(inputToken)
+  }, [connect, inputToken])
 
   // Clear input token and navigate to token page when connection fails
   useEffect(() => {
     if (connectionStatus === 'error') {
       console.log('[Connection Error] Clearing input token and navigating to input page')
-      // Token is already cleared in onclose/onerror, just clear the input
       setInputToken('')
       // Navigate to token input page if not already there
-      if (location.pathname !== '/') {
+      if (window.location.pathname !== '/') {
         console.log('[Connection Error] Navigating to token input page')
         navigate('/')
       }
     }
-  }, [connectionStatus, setInputToken, navigate, location.pathname])
+  }, [connectionStatus, setInputToken, navigate])
 
   return (
     <div className="container">
@@ -564,7 +360,7 @@ function TokenPage({
               placeholder={t('connection.tokenPlaceholder')}
               value={inputToken}
               onChange={(e) => setInputToken(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && connect()}
+              onKeyDown={(e) => e.key === 'Enter' && connect(inputToken)}
             />
           </div>
 
@@ -615,11 +411,12 @@ function SpaceListPage({
   const { t, i18n } = useTranslation('common');
   const navigate = useNavigate()
 
-  // Filter templates by current language
+  // Filter templates by current language (match base language code, e.g., 'zh-CN' matches 'zh')
   const filteredTemplates = useMemo(() => {
     const currentLang = i18n.language || 'en';
+    const baseLang = currentLang.split('-')[0]; // Extract base language code (e.g., 'zh' from 'zh-CN')
     return teamTemplates.filter(template =>
-      template.locales?.includes(currentLang)
+      template.locales?.some(locale => locale === currentLang || locale === baseLang)
     );
   }, [teamTemplates, i18n.language]);
 
@@ -1054,9 +851,7 @@ function SpaceListPage({
 function ChatPage({
   spaces,
   space,
-  setSpace,
   members,
-  setMembers,
   messages,
   wsRef,
   connectionStatus,
@@ -1065,9 +860,7 @@ function ChatPage({
 }: {
   spaces: Space[]
   space: Space | null
-  setSpace: (s: Space | null | ((prev: Space | null) => Space | null)) => void
   members: Member[]
-  setMembers: (m: Member[] | ((prev: Member[]) => Member[])) => void
   messages: Message[]
   wsRef: React.RefObject<WebSocket | null>
   connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
@@ -1102,21 +895,12 @@ function ChatPage({
   // Load space data when spaceId changes or when connection is established
   useEffect(() => {
     if (spaceId && connectionStatus === 'connected') {
-      const currentSpace = spaces.find(s => s.id === spaceId)
-      if (currentSpace) {
-        setSpace(currentSpace)
-      }
-      // Always request members and messages when we have a spaceId and are connected
-      // This handles page refresh where spaces might not be loaded yet
+      // Request specific space data, members and messages
+      sendMessage({ type: 'get_space', payload: { spaceId } })
       sendMessage({ type: 'get_members', payload: { spaceId } })
       sendMessage({ type: 'get_messages', payload: { spaceId } })
-
-      // If spaces is loaded and current space not found, redirect to spaces list
-      if (spaces.length > 0 && !currentSpace) {
-        navigate('/spaces')
-      }
     }
-  }, [spaceId, connectionStatus, spaces, setSpace, sendMessage, navigate])
+  }, [spaceId, connectionStatus, sendMessage])
 
   // Track if user is at bottom (viewing latest messages)
   const [isAtBottom, setIsAtBottom] = useState(true)
@@ -1381,7 +1165,7 @@ function ChatPage({
   const formatTime = (timestamp: string) => {
     const date = new Date(timestamp)
     const locale = i18n.language === 'zh' ? 'zh-CN' : 'en-US'
-    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit' })
+    return date.toLocaleTimeString(locale, { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   }
 
   const switchSpace = (targetSpace: Space) => {
@@ -1395,6 +1179,7 @@ function ChatPage({
     navigate('/')
   }
 
+  // Show loading while waiting for space data, or error if space not found
   if (!space) {
     return <div className="container"><div className="empty-state">{t('common.loading')}</div></div>
   }
@@ -1657,7 +1442,6 @@ function ChatPage({
             spaceId={spaceId || ''}
             onClose={() => setShowMemberManager(false)}
             sendMessage={sendMessage}
-            setMembers={setMembers}
           />
         )}
       </div>
@@ -1670,14 +1454,12 @@ function MemberManagerModal({
   members,
   spaceId,
   onClose,
-  sendMessage,
-  setMembers
+  sendMessage
 }: {
   members: Member[]
   spaceId: string
   onClose: () => void
   sendMessage: (message: HubMessage) => void
-  setMembers: (m: Member[] | ((prev: Member[]) => Member[])) => void
 }) {
   const { t } = useTranslation(['common', 'ai']);
   const defaultSoulMdTemplate = useDefaultSoulMdTemplate();
@@ -1781,26 +1563,6 @@ function MemberManagerModal({
     }
     return colors[Math.abs(hash) % colors.length]
   }
-
-  // Handle member updates from server
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      try {
-        const message = JSON.parse(event.data)
-        if (message.type === 'members_data') {
-          setMembers(message.payload?.members || [])
-        } else if (message.type === 'member_added' || message.type === 'member_updated' || message.type === 'member_removed') {
-          // Refresh members list
-          sendMessage({ type: 'get_members', payload: { spaceId } })
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    window.addEventListener('message', handleMessage as EventListener)
-    return () => window.removeEventListener('message', handleMessage as EventListener)
-  }, [spaceId, sendMessage, setMembers])
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -1953,34 +1715,23 @@ function AttachmentView({ attachment, isUser }: { attachment: Attachment; isUser
 
 // Connection Guard - redirects to token page if not connected
 function ConnectionGuard({
-  connectionStatus,
   children
 }: {
-  connectionStatus: 'idle' | 'connecting' | 'connected' | 'error'
   children: React.ReactNode
 }) {
-  const navigate = useNavigate()
-  const location = useLocation()
-
-  useEffect(() => {
-    console.log('[ConnectionGuard] Status:', connectionStatus, 'Path:', location.pathname)
-    // If not connected and not on token page, redirect to token page
-    if (connectionStatus === 'idle' && location.pathname !== '/') {
-      console.log('[ConnectionGuard] Not connected, redirecting to token page')
-      navigate('/')
-    }
-  }, [connectionStatus, navigate, location.pathname])
-
+  // Just render children - let the page stay as is while connecting
+  // The components will handle loading states appropriately
   return <>{children}</>
 }
 
-// Main App Component
-function App() {
+// Inner app component that has access to router hooks
+function AppContent() {
+  const navigate = useNavigate()
+  const { t } = useTranslation('common')
   const [inputToken, setInputToken] = useState('')
   const {
-    setToken,
     connectionStatus, setConnectionStatus,
-    error, setError,
+    error,
     space, setSpace,
     spaces, setSpaces,
     members, setMembers,
@@ -1989,40 +1740,206 @@ function App() {
     teamTemplates, setTeamTemplates,
     toolStatuses, setToolStatuses,
     wsRef,
-    disconnect
+    disconnect,
+    connect,
+    addMessageHandler
   } = useGlobalState()
 
+  // Use ref to track current space value in handlers without re-registering
+  const spaceRef = useRef(space)
+  useEffect(() => {
+    spaceRef.current = space
+  }, [space])
+
+  // Global message handler - handles ALL messages regardless of route
+  useEffect(() => {
+    const handleMessage = (message: HubMessage) => {
+      console.log('[Global Handler]', message.type, message.payload)
+
+      switch (message.type) {
+        case 'connected':
+          setConnectionStatus('connected')
+          break
+
+        case 'paired':
+          console.log('[paired] Received, connected to hub')
+          // Request templates and spaces from backend before navigating
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(JSON.stringify({ type: 'get_templates' }))
+            wsRef.current.send(JSON.stringify({ type: 'get_all_spaces' }))
+          }
+          // Navigate to spaces list if we're on the root page (login flow)
+          if (window.location.pathname === '/') {
+            navigate('/spaces')
+          }
+          break
+
+        case 'templates_data':
+          setTeamTemplates(message.payload?.templates || [])
+          break
+
+        case 'space_data':
+          const spaceData = message.payload?.space
+          if (spaceData) {
+            setSpace(spaceData)
+          }
+          break
+
+        case 'all_spaces_data':
+          setSpaces(message.payload?.spaces || [])
+          break
+
+        case 'space_deleted':
+          const deletedSpaceId = message.payload?.spaceId
+          setSpaces((prev: Space[]) => prev.filter((s: Space) => s.id !== deletedSpaceId))
+          // If the deleted space is the current space, clear the state
+          if (spaceRef.current?.id === deletedSpaceId) {
+            setSpace(null)
+            setMembers([])
+            setMessages([])
+          }
+          break
+
+        case 'space_created':
+          const { space: newSpace, members: newMembers } = message.payload
+          setSpace(newSpace)
+          setMembers(newMembers)
+          setMessages([])
+          setCreationProgress('')
+          // Always navigate to the new space's chat page
+          navigate(`/spaces/${newSpace.id}/chat`)
+          break
+
+        case 'space_creation_progress':
+          setCreationProgress(message.payload?.message || '')
+          break
+
+        case 'members_data':
+          setMembers(message.payload?.members || [])
+          break
+
+        case 'messages_data':
+          setMessages(message.payload?.messages || [])
+          break
+
+        case 'older_messages_data':
+          const olderMessages = message.payload?.messages || []
+          if (olderMessages.length > 0) {
+            setMessages((prev: Message[]) => {
+              const existingIds = new Set(prev.map((msg: Message) => msg.id))
+              const newMessages = olderMessages.filter((msg: Message) => !existingIds.has(msg.id))
+              if (newMessages.length === 0) {
+                return prev
+              }
+              return [...newMessages, ...prev]
+            })
+          }
+          break
+
+        case 'message_start':
+          const startMsg = message.payload?.message
+          if (startMsg) {
+            setMessages((prev: Message[]) => {
+              if (prev.some(m => m.id === startMsg.id)) {
+                console.log(`[App] Message ${startMsg.id} already exists, skipping`)
+                return prev
+              }
+              console.log(`[App] Adding message_start: ${startMsg.id}`)
+              return [...prev, startMsg]
+            })
+          }
+          break
+
+        case 'message_update':
+          const updateMsg = message.payload?.message
+          if (updateMsg) {
+            setMessages((prev: Message[]) => {
+              const existingIndex = prev.findIndex(m => m.id === updateMsg.id)
+              if (existingIndex >= 0) {
+                console.log(`[App] Updating message ${updateMsg.id}, isStreaming: ${updateMsg.isStreaming}`)
+                const updated = [...prev]
+                updated[existingIndex] = updateMsg
+                return updated
+              } else {
+                console.log(`[App] Message ${updateMsg.id} not found, adding as new`)
+                return [...prev, updateMsg]
+              }
+            })
+          }
+          break
+
+        case 'space_paused':
+          const { spaceId: pausedSpaceId, isPaused: pausedIsPaused, pausedAt } = message.payload || {}
+          if (pausedSpaceId) {
+            setSpaces((prev: Space[]) =>
+              prev.map(s =>
+                s.id === pausedSpaceId
+                  ? { ...s, isPaused: pausedIsPaused, pausedAt }
+                  : s
+              )
+            )
+            if (spaceRef.current?.id === pausedSpaceId) {
+              setSpace((prev: Space | null) => prev ? { ...prev, isPaused: pausedIsPaused, pausedAt } : null)
+            }
+            alert(t('chat.spacePausedAlert'))
+          }
+          break
+
+        case 'space_resumed':
+          const { spaceId: resumedSpaceId, isPaused: resumedIsPaused } = message.payload || {}
+          if (resumedSpaceId) {
+            setSpaces((prev: Space[]) =>
+              prev.map(s =>
+                s.id === resumedSpaceId
+                  ? { ...s, isPaused: resumedIsPaused, pausedAt: undefined }
+                  : s
+              )
+            )
+            if (spaceRef.current?.id === resumedSpaceId) {
+              setSpace((prev: Space | null) => prev ? { ...prev, isPaused: resumedIsPaused, pausedAt: undefined } : null)
+            }
+            alert(t('chat.spaceResumedAlert'))
+          }
+          break
+
+        case 'tool_status_update':
+          const { messageId: toolMessageId, toolStatuses: newToolStatuses } = message.payload || {}
+          if (toolMessageId && newToolStatuses) {
+            setToolStatuses((prev: Record<string, ToolStatus[]>) => ({
+              ...prev,
+              [toolMessageId]: newToolStatuses
+            }))
+          }
+          break
+
+        case 'error':
+          // Error handled by global state
+          break
+      }
+    }
+    return addMessageHandler(handleMessage)
+  }, [addMessageHandler, navigate, setConnectionStatus, setTeamTemplates, setSpace, setSpaces, setMembers, setMessages, setCreationProgress, setToolStatuses, t, wsRef])
+
   return (
-    <BrowserRouter>
+    <>
       <LanguageSwitcher />
       <Routes>
         <Route
           path="/"
           element={
             <TokenPage
-              setToken={setToken}
               inputToken={inputToken}
               setInputToken={setInputToken}
               connectionStatus={connectionStatus}
-              setConnectionStatus={setConnectionStatus}
               error={error}
-              setError={setError}
-              wsRef={wsRef}
-              setSpaces={setSpaces}
-              setMembers={setMembers}
-              setMessages={setMessages}
-              space={space}
-              setSpace={setSpace}
-              setCreationProgress={setCreationProgress}
-              setTeamTemplates={setTeamTemplates}
-              setToolStatuses={setToolStatuses}
+              connect={connect}
             />
           }
         />
         <Route
           path="/spaces"
           element={
-            <ConnectionGuard connectionStatus={connectionStatus}>
+            <ConnectionGuard>
               <SpaceListPage
                 spaces={spaces}
                 connectionStatus={connectionStatus}
@@ -2039,13 +1956,11 @@ function App() {
         <Route
           path="/spaces/:spaceId/chat"
           element={
-            <ConnectionGuard connectionStatus={connectionStatus}>
+            <ConnectionGuard>
               <ChatPage
                 spaces={spaces}
                 space={space}
-                setSpace={setSpace}
                 members={members}
-                setMembers={setMembers}
                 messages={messages}
                 wsRef={wsRef}
                 connectionStatus={connectionStatus}
@@ -2056,6 +1971,15 @@ function App() {
           }
         />
       </Routes>
+    </>
+  )
+}
+
+// Main App Component - wraps AppContent with BrowserRouter
+function App() {
+  return (
+    <BrowserRouter>
+      <AppContent />
     </BrowserRouter>
   )
 }

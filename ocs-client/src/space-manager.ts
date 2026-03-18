@@ -72,6 +72,13 @@ export class SpaceManager {
     this.gateway.on('tool', (toolEvent: any) => {
       this.handleToolEvent(toolEvent);
     });
+
+    // 监听 agent 事件，处理 assistant 消息流
+    this.gateway.on('agent', (agentEvent: any) => {
+      this.handleAgentEvent(agentEvent).catch(err => {
+        logger.error(`[SpaceManager] Failed to handle agent event: ${err}`);
+      });
+    });
   }
 
   /**
@@ -132,6 +139,61 @@ export class SpaceManager {
         this.onToolStatusChanged?.(activeRun.memberId, activeRun.messageId, Array.from(activeRun.toolStatuses.values()));
       }
     }
+  }
+
+  /**
+   * 处理 agent 事件 (assistant 消息流)
+   */
+  private async handleAgentEvent(agentEvent: any): Promise<void> {
+    const { runId, sessionKey, stream, data } = agentEvent;
+    if (stream !== 'assistant' || !data) {
+      return;
+    }
+
+    if (!sessionKey) {
+      logger.warn(`[SpaceManager] Agent event missing sessionKey, runId: ${runId}`);
+      return;
+    }
+
+    // 通过 sessionKey 查找对应的活跃运行
+    const activeRunId = this.sessionKeyToRunId.get(sessionKey);
+    if (!activeRunId) {
+      logger.debug(`[SpaceManager] No active run found for sessionKey: ${sessionKey}`);
+      return;
+    }
+
+    const activeRun = this.activeToolRuns.get(activeRunId);
+    if (!activeRun) {
+      logger.debug(`[SpaceManager] Active run ${activeRunId} not found for sessionKey: ${sessionKey}`);
+      return;
+    }
+
+    // 获取 agent 回复文本
+    const text = data.text;
+    const delta = data.delta;
+
+    if (!text && !delta) {
+      return;
+    }
+
+    // 获取完整的回复文本
+    const fullText = text || delta;
+    logger.info(`[SpaceManager] Agent assistant event received for member ${activeRun.memberId}: "${fullText.substring(0, 100)}..."`);
+
+    // 获取 spaceId
+    const spaceId = this.gateway.getSpaceIdBySessionKey(sessionKey);
+    if (!spaceId) {
+      logger.warn(`[SpaceManager] Cannot find spaceId for sessionKey: ${sessionKey}`);
+      return;
+    }
+
+    // 保存 agent 消息到数据库
+    await this.addMessage(spaceId, activeRun.memberId, fullText);
+    logger.info(`[SpaceManager] Saved agent message to database for member ${activeRun.memberId}`);
+
+    // 清理工具运行跟踪
+    this.activeToolRuns.delete(activeRunId);
+    this.sessionKeyToRunId.delete(sessionKey);
   }
 
   /**
@@ -503,7 +565,7 @@ When you create a file, other team members can access it immediately.
 
     // 先获取 sessionKey 并绑定到 space，避免竞态条件
     const targetSpaceId = spaceId || member.spaceId;
-    let currentSessionKey = this.gateway.getOrCreateSessionKey(member.agentId);
+    let currentSessionKey = this.gateway.getOrCreateSessionKey(member.agentId, targetSpaceId);
     this.gateway.bindSessionToSpace(currentSessionKey, targetSpaceId);
     logger.info(`[SpaceManager] Prepared sessionKey: ${currentSessionKey} for agent: ${member.agentId}`);
 
@@ -512,9 +574,13 @@ When you create a file, other team members can access it immediately.
       const timeout = setTimeout(() => {
         this.gateway.off('chat', onStreamEvent);
         // Clean up tool run tracking on timeout
-        if (currentRunId) {
-          this.activeToolRuns.delete(currentRunId);
-          this.sessionKeyToRunId.delete(currentSessionKey);
+        if (currentRunId && currentSessionKey) {
+          const runIdToClean = currentRunId;
+          const sessionKeyToClean = currentSessionKey;
+          setTimeout(() => {
+            this.activeToolRuns.delete(runIdToClean);
+            this.sessionKeyToRunId.delete(sessionKeyToClean);
+          }, 30000);
         }
         reject(new Error('Gateway message timeout'));
       }, 300000); // 5 minute timeout
@@ -596,11 +662,15 @@ When you create a file, other team members can access it immediately.
             clearTimeout(timeout);
             this.gateway.off('chat', onStreamEvent);
 
-            // Clean up tool run tracking
-            if (currentRunId) {
-              this.activeToolRuns.delete(currentRunId);
-              this.sessionKeyToRunId.delete(currentSessionKey);
-              logger.info(`[SpaceManager] Tool run tracking cleaned up for runId: ${currentRunId}`);
+            // 延迟清理工具运行跟踪，给 agent 事件处理留出时间
+            if (currentRunId && currentSessionKey) {
+              const runIdToClean = currentRunId;
+              const sessionKeyToClean = currentSessionKey;
+              setTimeout(() => {
+                this.activeToolRuns.delete(runIdToClean);
+                this.sessionKeyToRunId.delete(sessionKeyToClean);
+                logger.info(`[SpaceManager] Tool run tracking cleaned up for runId: ${runIdToClean}`);
+              }, 30000); // 延迟 30 秒清理
             }
 
             // 记录完整回复文本
@@ -665,11 +735,15 @@ When you create a file, other team members can access it immediately.
             clearTimeout(timeout);
             this.gateway.off('chat', onStreamEvent);
 
-            // Clean up tool run tracking on abort
-            if (currentRunId) {
-              this.activeToolRuns.delete(currentRunId);
-              this.sessionKeyToRunId.delete(currentSessionKey);
-              logger.info(`[SpaceManager] Tool run tracking cleaned up for aborted runId: ${currentRunId}`);
+            // 延迟清理工具运行跟踪，给 agent 事件处理留出时间
+            if (currentRunId && currentSessionKey) {
+              const runIdToClean = currentRunId;
+              const sessionKeyToClean = currentSessionKey;
+              setTimeout(() => {
+                this.activeToolRuns.delete(runIdToClean);
+                this.sessionKeyToRunId.delete(sessionKeyToClean);
+                logger.info(`[SpaceManager] Tool run tracking cleaned up for aborted runId: ${runIdToClean}`);
+              }, 30000);
             }
 
             logger.warn(`[SpaceManager] Aborted event received for ${memberId}: ${event.errorMessage || 'No error message'}`);
@@ -687,11 +761,15 @@ When you create a file, other team members can access it immediately.
             clearTimeout(timeout);
             this.gateway.off('chat', onStreamEvent);
 
-            // Clean up tool run tracking on error
-            if (currentRunId) {
-              this.activeToolRuns.delete(currentRunId);
-              this.sessionKeyToRunId.delete(currentSessionKey);
-              logger.info(`[SpaceManager] Tool run tracking cleaned up for error runId: ${currentRunId}`);
+            // 延迟清理工具运行跟踪，给 agent 事件处理留出时间
+            if (currentRunId && currentSessionKey) {
+              const runIdToClean = currentRunId;
+              const sessionKeyToClean = currentSessionKey;
+              setTimeout(() => {
+                this.activeToolRuns.delete(runIdToClean);
+                this.sessionKeyToRunId.delete(sessionKeyToClean);
+                logger.info(`[SpaceManager] Tool run tracking cleaned up for error runId: ${runIdToClean}`);
+              }, 30000);
             }
 
             logger.error(`[SpaceManager] Error event received for ${memberId}: ${event.errorMessage || 'Unknown error'}`);

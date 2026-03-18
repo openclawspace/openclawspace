@@ -19,6 +19,8 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
+trash ~/.openclawspace/logs
+
 echo ""
 echo "步骤 1/2: 停止所有服务..."
 echo "--------------------------"

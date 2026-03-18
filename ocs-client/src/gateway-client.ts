@@ -311,7 +311,7 @@ export class GatewayClient extends EventEmitter {
 
       // 【关键】第一时间输出完整消息日志 - 无论消息类型，都先记录
       logger.info(`[Gateway] RAW MESSAGE received: type=${frame.type}, id=${frame.id}, event=${frame.event}`);
-      if(!(`${frame.event}` in ['connect.challenge','tick','shutdown','health','presence','heartbeat'])){
+      if (frame.event && !['connect.challenge','tick','shutdown','health','presence','heartbeat'].includes(frame.event)) {
         // 系统事件不需要输出到日志
         logger.info(`[Gateway] RAW MESSAGE body: ${JSON.stringify(frame, null, 2)}`);
       }
@@ -379,9 +379,13 @@ export class GatewayClient extends EventEmitter {
 
       case 'agent': {
         const agentEvent = payload as AgentToolEvent;
-        // 只转发 tool 事件，让外部处理工具状态显示
+        // 转发 tool 事件，让外部处理工具状态显示
         if (agentEvent.stream === 'tool') {
           this.emit('tool', agentEvent);
+        }
+        // 转发 assistant 事件，包含 AI 的回复文本
+        if (agentEvent.stream === 'assistant') {
+          this.emit('agent', agentEvent);
         }
         break;
       }
@@ -416,8 +420,8 @@ export class GatewayClient extends EventEmitter {
    * 发送聊天消息
    */
   async sendChatMessage(agentId: string, spaceId: string, message: string): Promise<{ runId: string; sessionKey: string }> {
-
-    const sessionKey = this.getOrCreateSessionKey(agentId);
+    // 使用固定的 sessionKey 格式，确保断开重连后仍能恢复同一会话
+    const sessionKey = this.getOrCreateSessionKey(agentId, spaceId);
 
     // 建立 sessionKey -> spaceId 映射，用于消息隔离
     this.sessionToSpace.set(sessionKey, spaceId);
@@ -443,17 +447,13 @@ export class GatewayClient extends EventEmitter {
 
   /**
    * 获取或创建 session key
-   * 使用 OpenClaw 规范格式：agent:{agentId}:{rest}
+   * 使用 OpenClaw 规范格式：agent:{agentId}:space:{spaceId}
    * 这样 Gateway 才能正确解析 agentId，使用对应的 workspace 和配置
+   * 固定格式确保断开重连后仍能恢复同一会话
    */
-  getOrCreateSessionKey(agentId: string): string {
-    let sessionKey = this.sessionKeys.get(agentId);
-    if (!sessionKey) {
-      // OpenClaw 规范格式：agent:{agentId}:{rest}
-      // parseAgentSessionKey 期望 parts.length >= 3 且 parts[0] === 'agent'
-      sessionKey = `agent:${agentId}:ocs-${Date.now()}`;
-      this.sessionKeys.set(agentId, sessionKey);
-    }
+  getOrCreateSessionKey(agentId: string, spaceId: string): string {
+    const sessionKey = `agent:${agentId}:space:${spaceId}`;
+    this.sessionKeys.set(agentId, sessionKey);
     return sessionKey;
   }
 

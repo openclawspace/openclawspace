@@ -36,7 +36,16 @@ export class Logger {
   }
 
   private formatMessage(level: string, message: string): string {
-    const timestamp = new Date().toISOString();
+    const now = new Date();
+    const timestamp = now.toLocaleString('zh-CN', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).replace(/\//g, '-');
     return `[${timestamp}] [${level}] ${message}`;
   }
 
